@@ -1,3 +1,20 @@
+# Bytecode compilado de Python
+_pycache_/
+*.py[cod]
+*.pyo
+*.pyd  --- pero no me esta ignorando el directorio de _pycache_
+
+# Entornos virtuales
+venv/
+env/
+ENV/
+
+# Archivos de configuración locales
+*.env
+.env.
+.venv
+.env
+
 # Logs
 logs
 *.log
@@ -18,10 +35,7 @@ dist-ssr
 .idea
 .DS_Store
 *.suo
-*.ntvs*
+.ntvs
 *.njsproj
 *.sln
 *.sw?
-
-.venv
-.env
