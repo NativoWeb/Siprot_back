@@ -1,7 +1,8 @@
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, func, ForeignKey, LargeBinary, JSON
+from sqlalchemy import Column, Integer, String, Float, Boolean, DateTime, func, ForeignKey, LargeBinary, JSON
 from sqlalchemy.orm import relationship
 from database import Base
 import enum
+from datetime import datetime
 
 class UserRole(enum.Enum):
     SUPERADMIN = "superadmin"
@@ -54,3 +55,31 @@ class Document(Base):
 
     def __repr__(self):
         return f"<Document(title='{self.title}', type='{self.document_type}')>"
+
+class Program(Base):
+    __tablename__ = "programs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    level = Column(String, nullable=False)  # tecnólogo, especialización, etc.
+    sector = Column(String, nullable=False)
+    core_line = Column(String, nullable=False)
+    quota = Column(Integer)  # cupos o aprendices
+    region = Column(String)  # para R3.4
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class DemandIndicator(Base):
+    __tablename__ = "demand_indicators"
+
+    id = Column(Integer, primary_key=True)
+    sector = Column(String, nullable=False)
+    indicator_value = Column(Float)
+    source_document_id = Column(Integer, ForeignKey("documents.id"), nullable=True)  # relación con biblioteca
+
+class ProjectionSetting(Base):
+    __tablename__ = "projection_settings"
+
+    id = Column(Integer, primary_key=True)
+    sector = Column(String)
+    growth_rate = Column(Float)  # % anual
+    years_to_project = Column(Integer, default=10)
