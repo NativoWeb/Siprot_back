@@ -50,6 +50,18 @@ def update_user(user_id: int, user_data: UserUpdate, db: Session = Depends(get_d
     db.refresh(user)
     return UserResponse.from_orm(user)
 
+@router.get("/roles")
+def get_roles():
+    return {
+        "roles": ["superadmin", "administrativo", "planeacion", "instructor"],
+        "role_descriptions": {
+            "superadmin": "Super Administrador - Acceso completo al sistema",
+            "administrativo": "Administrativo - Gestión de usuarios y reportes", 
+            "planeacion": "Planeación - Gestión de documentos y escenarios",
+            "instructor": "Instructor - Consulta de documentos y recursos"
+        }
+    }
+
 
 @router.delete("/{user_id}")
 def delete_user(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(require_role(["superadmin"]))):
