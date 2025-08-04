@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List, Optional
 from models import Document, User
 from schemas import DocumentResponse
-from auth import get_db, require_role
+from routers.auth import get_db, require_role
 import os, shutil, uuid
 import logging
 
