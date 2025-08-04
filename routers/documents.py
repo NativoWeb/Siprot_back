@@ -9,9 +9,21 @@ import logging
 
 router = APIRouter(prefix="/documents", tags=["Documentos"])
 
-# Configuración de directorio y logging
+# Configuración de directorios y logging
 UPLOAD_DIRECTORY = "uploads"
+DOCS_DIRECTORY = os.path.join(UPLOAD_DIRECTORY, "docs")
+CSV_DIRECTORY = os.path.join(UPLOAD_DIRECTORY, "csv")
+os.makedirs(DOCS_DIRECTORY, exist_ok=True)
+os.makedirs(CSV_DIRECTORY, exist_ok=True)
 logger = logging.getLogger(__name__)
+
+# Tipos MIME permitidos
+ALLOWED_MIME_TYPES = {
+    "application/pdf": DOCS_DIRECTORY,
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": DOCS_DIRECTORY,
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": CSV_DIRECTORY,
+    "text/csv": CSV_DIRECTORY
+}
 
 # Endpoint: Cargar Documento
 @router.post("/upload", response_model=DocumentResponse)
@@ -26,17 +38,13 @@ async def upload_document(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["planeacion", "superadmin"]))
 ):
-    allowed_types = [
-        "application/pdf",
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"  # .xlsx
-    ]
-    if file.content_type not in allowed_types:
-        raise HTTPException(status_code=400, detail="Formato no permitido. Use PDF, DOCX o XLSX.")
+    if file.content_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(status_code=400, detail="Formato no permitido. Use PDF, DOCX, XLSX o CSV.")
 
-    file_extension = os.path.splitext(file.filename)[1]
+    save_directory = ALLOWED_MIME_TYPES[file.content_type]
+    file_extension = os.path.splitext(file.filename)[1].lower()
     unique_filename = f"{uuid.uuid4()}{file_extension}"
-    file_location = os.path.join(UPLOAD_DIRECTORY, unique_filename)
+    file_location = os.path.join(save_directory, unique_filename)
 
     try:
         with open(file_location, "wb") as buffer:
@@ -104,3 +112,72 @@ def get_document_filter_options(
         "document_types": [d[0] for d in document_types if d[0]],
         "years": [y[0] for y in years if y[0]]
     }
+
+# Editar metadatos
+@router.put("/{document_id}/edit", response_model=DocumentResponse)
+def update_document_metadata(
+    document_id: int,
+    title: str = Form(...),
+    year: int = Form(...),
+    sector: str = Form(...),
+    core_line: str = Form(...),
+    document_type: str = Form(...),
+    additional_notes: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["planeacion", "superadmin"]))
+):
+    document = db.query(Document).filter(Document.id == document_id).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="Documento no encontrado.")
+
+    document.title = title
+    document.year = year
+    document.sector = sector
+    document.core_line = core_line
+    document.document_type = document_type
+    document.additional_notes = additional_notes
+
+    db.commit()
+    db.refresh(document)
+    return DocumentResponse.from_orm(document)
+
+# Reemplazar archivo
+@router.put("/{document_id}/replace-file", response_model=DocumentResponse)
+async def replace_document_file(
+    document_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["planeacion", "superadmin"]))
+):
+    document = db.query(Document).filter(Document.id == document_id).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="Documento no encontrado.")
+
+    if file.content_type not in ALLOWED_MIME_TYPES:
+        raise HTTPException(status_code=400, detail="Formato no permitido. Use PDF, DOCX, XLSX o CSV.")
+
+    # Eliminar archivo anterior
+    if os.path.exists(document.file_path):
+        try:
+            os.remove(document.file_path)
+        except Exception as e:
+            logger.warning(f"No se pudo eliminar archivo anterior: {e}")
+
+    # Guardar nuevo archivo
+    save_directory = ALLOWED_MIME_TYPES[file.content_type]
+    file_extension = os.path.splitext(file.filename)[1].lower()
+    unique_filename = f"{uuid.uuid4()}{file_extension}"
+    file_location = os.path.join(save_directory, unique_filename)
+
+    try:
+        with open(file_location, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as e:
+        logger.error(f"Error guardando archivo: {e}")
+        raise HTTPException(status_code=500, detail="Error al guardar el nuevo archivo.")
+
+    document.file_path = file_location
+    db.commit()
+    db.refresh(document)
+
+    return DocumentResponse.from_orm(document)

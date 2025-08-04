@@ -38,12 +38,18 @@ def update_user(user_id: int, user_data: UserUpdate, db: Session = Depends(get_d
     if current_user.role != "superadmin" and current_user.id != user_id:
         raise HTTPException(status_code=403, detail="No autorizado")
 
-    for field, value in user_data.dict(exclude_unset=True).items():
+    update_data = user_data.dict(exclude_unset=True)
+
+    if "password" in update_data:
+        user.password = get_password_hash(update_data.pop("password"))
+
+    for field, value in update_data.items():
         setattr(user, field, value)
 
     db.commit()
     db.refresh(user)
     return UserResponse.from_orm(user)
+
 
 @router.delete("/{user_id}")
 def delete_user(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(require_role(["superadmin"]))):

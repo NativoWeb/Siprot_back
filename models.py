@@ -36,8 +36,6 @@ class Document(Base):
     __tablename__ = "documents"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String(250), nullable=False)
-    degree = Column(String(255), nullable=False)
     content = Column(LargeBinary, nullable=False)
     prediction = Column(JSON, nullable=True)
     title = Column(String(255), nullable=False)

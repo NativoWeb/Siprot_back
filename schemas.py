@@ -43,6 +43,7 @@ class UserUpdate(BaseModel):
     additional_notes: Optional[str] = None
     role: Optional[str] = None
     is_active: Optional[bool] = None
+    password: Optional[str] = None  # ✅ Añadido
 
 # Nuevo esquema para la creación de documentos
 class DocumentCreate(BaseModel):
