@@ -70,3 +70,32 @@ class DocumentResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class ProgramCreate(BaseModel):
+    name: str
+    level: str
+    sector: str
+    core_line: str
+    quota: Optional[int] = None
+    region: Optional[str] = None
+
+class ProgramUpdate(BaseModel):
+    name: Optional[str] = None
+    level: Optional[str] = None
+    sector: Optional[str] = None
+    core_line: Optional[str] = None
+    quota: Optional[int] = None
+    region: Optional[str] = None
+
+class ProgramResponse(BaseModel):
+    id: int
+    name: str
+    level: str
+    sector: str
+    core_line: str
+    quota: Optional[int]
+    region: Optional[str]
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

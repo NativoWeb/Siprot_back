@@ -9,15 +9,19 @@ import logging
 
 router = APIRouter(prefix="/documents", tags=["Documentos"])
 
-# Configuración de directorios y logging
+# Directorios de almacenamiento de archivos
 UPLOAD_DIRECTORY = "uploads"
-DOCS_DIRECTORY = os.path.join(UPLOAD_DIRECTORY, "docs")
-CSV_DIRECTORY = os.path.join(UPLOAD_DIRECTORY, "csv")
+DOCS_DIRECTORY = os.path.join(UPLOAD_DIRECTORY, "docs")  # PDF y DOCX
+CSV_DIRECTORY = os.path.join(UPLOAD_DIRECTORY, "csv")    # XLSX y CSV
+
+# Crear carpetas si no existen
 os.makedirs(DOCS_DIRECTORY, exist_ok=True)
 os.makedirs(CSV_DIRECTORY, exist_ok=True)
+
+# Logger para errores del sistema
 logger = logging.getLogger(__name__)
 
-# Tipos MIME permitidos
+# Asociación de tipos MIME con su carpeta destino
 ALLOWED_MIME_TYPES = {
     "application/pdf": DOCS_DIRECTORY,
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": DOCS_DIRECTORY,
@@ -25,7 +29,7 @@ ALLOWED_MIME_TYPES = {
     "text/csv": CSV_DIRECTORY
 }
 
-# Endpoint: Cargar Documento
+# 📥 Cargar nuevo documento
 @router.post("/upload", response_model=DocumentResponse)
 async def upload_document(
     file: UploadFile = File(...),
@@ -38,6 +42,7 @@ async def upload_document(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["planeacion", "superadmin"]))
 ):
+    # Validar tipo de archivo
     if file.content_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(status_code=400, detail="Formato no permitido. Use PDF, DOCX, XLSX o CSV.")
 
@@ -46,6 +51,7 @@ async def upload_document(
     unique_filename = f"{uuid.uuid4()}{file_extension}"
     file_location = os.path.join(save_directory, unique_filename)
 
+    # Guardar archivo en disco
     try:
         with open(file_location, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
@@ -53,6 +59,7 @@ async def upload_document(
         logger.error(f"Error guardando archivo: {e}")
         raise HTTPException(status_code=500, detail="Error al guardar el archivo.")
 
+    # Registrar documento en la base de datos
     db_document = Document(
         title=title,
         year=year,
@@ -70,7 +77,7 @@ async def upload_document(
 
     return DocumentResponse.from_orm(db_document)
 
-# Listar documentos con filtros
+# 📄 Listar documentos con filtros opcionales
 @router.get("/", response_model=List[DocumentResponse])
 def get_documents(
     sector: Optional[str] = Query(None),
@@ -95,7 +102,7 @@ def get_documents(
     query = query.order_by(Document.uploaded_at.desc())
     return [DocumentResponse.from_orm(doc) for doc in query.all()]
 
-# Opciones para filtros
+# 📊 Obtener opciones de filtro dinámicas
 @router.get("/filter-options")
 def get_document_filter_options(
     db: Session = Depends(get_db),
@@ -113,7 +120,7 @@ def get_document_filter_options(
         "years": [y[0] for y in years if y[0]]
     }
 
-# Editar metadatos
+# ✏️ Editar metadatos del documento
 @router.put("/{document_id}/edit", response_model=DocumentResponse)
 def update_document_metadata(
     document_id: int,
@@ -141,7 +148,7 @@ def update_document_metadata(
     db.refresh(document)
     return DocumentResponse.from_orm(document)
 
-# Reemplazar archivo
+# 🔁 Reemplazar archivo de un documento existente
 @router.put("/{document_id}/replace-file", response_model=DocumentResponse)
 async def replace_document_file(
     document_id: int,
@@ -156,7 +163,7 @@ async def replace_document_file(
     if file.content_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(status_code=400, detail="Formato no permitido. Use PDF, DOCX, XLSX o CSV.")
 
-    # Eliminar archivo anterior
+    # Eliminar archivo anterior si existe
     if os.path.exists(document.file_path):
         try:
             os.remove(document.file_path)
@@ -176,6 +183,7 @@ async def replace_document_file(
         logger.error(f"Error guardando archivo: {e}")
         raise HTTPException(status_code=500, detail="Error al guardar el nuevo archivo.")
 
+    # Actualizar ruta en base de datos
     document.file_path = file_location
     db.commit()
     db.refresh(document)
