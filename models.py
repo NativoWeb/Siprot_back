@@ -37,8 +37,6 @@ class Document(Base):
     __tablename__ = "documents"
 
     id = Column(Integer, primary_key=True, index=True)
-    content = Column(LargeBinary, nullable=True)
-    prediction = Column(JSON, nullable=True)
     title = Column(String(255), nullable=False)
     year = Column(Integer, nullable=False)
     sector = Column(String(100), nullable=False)
