@@ -1,6 +1,7 @@
-from pydantic import BaseModel, EmailStr
-from typing import Optional
+from pydantic import BaseModel, EmailStr, Field
+from typing import List, Optional, Dict, Any
 from datetime import datetime
+from enum import Enum
 
 class LoginRequest(BaseModel):
     email: EmailStr # Login ahora solo con email
@@ -99,3 +100,127 @@ class ProgramResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ----------------------- PDF ------------------------------------
+
+# Enums
+class TipoReporte(str, Enum):
+    INDICADORES = "indicadores"
+    PROSPECTIVA = "prospectiva"
+    OFERTA_EDUCATIVA = "oferta_educativa"
+    CONSOLIDADO = "consolidado"
+
+class EstadoReporte(str, Enum):
+    GENERANDO = "generando"
+    COMPLETADO = "completado"
+    ERROR = "error"
+
+# Schemas para Reportes
+class ParametrosReporte(BaseModel):
+    fecha_inicio: Optional[datetime] = None
+    fecha_fin: Optional[datetime] = None
+    incluir_graficos: bool = True
+    incluir_recomendaciones: bool = True
+    comentarios_analista: Optional[str] = None
+    indicadores_seleccionados: Optional[List[str]] = None
+
+class SolicitudReporte(BaseModel):
+    tipo: TipoReporte
+    parametros: ParametrosReporte
+    # ← Quitar usuario_id del request, se toma del usuario autenticado
+
+class ReporteResponse(BaseModel):
+    id: int
+    tipo: TipoReporte
+    fecha_generacion: datetime
+    usuario_id: int
+    parametros: ParametrosReporte
+    estado: EstadoReporte
+    archivo_path: Optional[str] = None
+    tamaño_archivo: Optional[int] = None
+    
+    class Config:
+        from_attributes = True
+
+# Schemas para Indicadores
+class IndicadorBase(BaseModel):
+    id: str
+    nombre: str
+    valor_actual: float
+    meta: float
+    unidad: str
+    tendencia: str
+    descripcion: Optional[str] = None
+    categoria: Optional[str] = None
+
+class IndicadorResponse(IndicadorBase):
+    fecha_actualizacion: datetime
+    cumplimiento: float
+    estado_semaforo: str
+    
+    class Config:
+        from_attributes = True
+
+class TipoReporteInfo(BaseModel):
+    tipo: TipoReporte
+    nombre: str
+    descripcion: str
+    tiempo_estimado: str
+    opciones_disponibles: List[str]
+
+# Schemas adicionales para datos específicos
+class ResumenIndicadores(BaseModel):
+    total_indicadores: int
+    verde: int
+    amarillo: int
+    rojo: int
+    cumplimiento_general: float
+
+class EscenarioProspectiva(BaseModel):
+    nombre: str
+    descripcion: str
+    probabilidad: int
+    impacto: str
+    recomendaciones: List[str]
+
+class TendenciaSectorial(BaseModel):
+    sector: str
+    crecimiento_esperado: float
+    demanda: str
+
+class ProgramaSector(BaseModel):
+    sector: str
+    programas_activos: int
+    cupos: int
+    ocupacion: int
+
+class BrechaFormativa(BaseModel):
+    area: str
+    demanda: int
+    oferta: int
+    brecha: int
+
+class ResumenEjecutivo(BaseModel):
+    fortalezas: List[str]
+    oportunidades: List[str]
+    debilidades: List[str]
+    amenazas: List[str]
+
+# Schemas para respuestas de progreso
+class ProgresoReporte(BaseModel):
+    id: int
+    estado: EstadoReporte
+    fecha_generacion: datetime
+    archivo_disponible: bool
+    porcentaje_completado: Optional[int] = None
+    mensaje_estado: Optional[str] = None
+
+# Schema para estadísticas de reportes
+class EstadisticasReportes(BaseModel):
+    total_reportes: int
+    reportes_completados: int
+    reportes_en_proceso: int
+    reportes_con_error: int
+    reportes_por_tipo: Dict[str, int]
+    tiempo_promedio_generacion: Optional[float] = None
