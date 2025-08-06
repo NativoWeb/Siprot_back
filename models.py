@@ -38,8 +38,8 @@ class Document(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String(255), nullable=False)
-    original_filename = Column(String(255), nullable=False)  # Add this
-    file_extension = Column(String(10), nullable=False)     # Add this
+    original_filename = Column(String(255), nullable=False)
+    file_extension = Column(String(10), nullable=False)
     mime_type = Column(String(100), nullable=False)   
     year = Column(Integer, nullable=False)
     sector = Column(String(100), nullable=False)
