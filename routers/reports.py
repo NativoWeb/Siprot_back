@@ -18,6 +18,16 @@ from services.data_service import DataService
 # Ajusta la importación según tu sistema de auth existente
 from routers.auth import get_current_user  # ← Ajusta según tu implementación
 
+
+def serialize_any(obj):
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    if isinstance(obj, dict):
+        return {k: serialize_any(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [serialize_any(v) for v in obj]
+    return obj
+
 router = APIRouter(prefix="/reportes", tags=["reportes"])
 
 @router.get("/tipos", response_model=List[TipoReporteInfo])
@@ -67,7 +77,7 @@ async def generar_reporte(
         nuevo_reporte = Reporte(
             tipo=solicitud.tipo.value,
             usuario_id=usuario_id,
-            parametros=solicitud.parametros.dict(),
+            parametros=serialize_any(solicitud.parametros.dict()),
             estado="generando"
         )
         db.add(nuevo_reporte)
