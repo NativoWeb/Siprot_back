@@ -39,3 +39,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+*.pyc
+__pycache__/
