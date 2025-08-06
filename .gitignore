@@ -1,5 +1,5 @@
 # Bytecode compilado de Python
-_pycache_/
+__pycache__/
 *.py[cod]
 *.pyo
 *.pyd  --- pero no me esta ignorando el directorio de _pycache_
