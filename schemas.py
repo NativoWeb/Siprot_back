@@ -60,6 +60,9 @@ class DocumentCreate(BaseModel):
 class DocumentResponse(BaseModel):
     id: int
     title: str
+    original_filename: str       
+    file_extension: str          
+    mime_type: str     
     year: int
     sector: str
     core_line: str
