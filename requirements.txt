@@ -40,3 +40,6 @@ pandas
 joblib
 scikit-learn
 tensorflow
+
+# PDF dependencies
+reportlab>=4.0.
