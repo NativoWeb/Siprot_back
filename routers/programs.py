@@ -39,7 +39,6 @@ def update_program(program_id: int, program_data: ProgramUpdate, db: Session = D
 
     for field, value in program_data.dict(exclude_unset=True).items():
         setattr(program, field, value)
-
     db.commit()
     db.refresh(program)
     return program
