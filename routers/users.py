@@ -64,13 +64,32 @@ def get_roles():
 
 
 @router.delete("/{user_id}")
-def delete_user(user_id: int, db: Session = Depends(get_db), current_user: User = Depends(require_role(["superadmin"]))):
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["superadmin"]))
+):
     user = db.query(User).filter(User.id == user_id).first()
+
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
-    db.delete(user)
+
+    # Bloquear eliminación de superadmin y planeacion
+    if user.role in ["planeacion", "superadmin"]:
+        raise HTTPException(
+            status_code=400,
+            detail='Los usuarios del rol "planeacion" y "superadmin" al tener archivos vinculados no se pueden eliminar. '
+                   'En caso que ya no quiera que se use un usuario, lo mejor es quitar el estado activo.'
+        )
+
+    # Desactivar en lugar de eliminar
+    if not user.is_active:
+        raise HTTPException(status_code=400, detail="El usuario ya está inactivo")
+
+    user.is_active = False
     db.commit()
-    return {"message": "Usuario eliminado exitosamente"}
+
+    return {"message": f"Usuario '{user.email}' desactivado exitosamente"}
 
 @router.put("/{user_id}/password")
 def change_password(user_id: int, password_data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):

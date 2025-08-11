@@ -40,7 +40,7 @@ def get_db():
 
 SECRET_KEY = "tu-clave-secreta-muy-segura-aqui-cambiar-en-produccion"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 400
+ACCESS_TOKEN_EXPIRE_MINUTES = 30 # Tiempo de expiración del token en minutos
 
 
 # Roles válidos
