@@ -22,7 +22,7 @@ class PDFService:
         self.styles = getSampleStyleSheet()
         self._setup_custom_styles()
         # ⚠️ CAMBIAR AQUÍ: Ruta del logo cuando lo tengas
-        self.logo_path = "uploads/logo.png"  # Cambia esta ruta cuando tengas el logo real
+        self.logo_path = "assets/logo_sena.png"  # Cambia esta ruta cuando tengas el logo real
         self.company_name = "SENA"  # Nombre de la empresa para el pie de página
         
     def _setup_custom_styles(self):

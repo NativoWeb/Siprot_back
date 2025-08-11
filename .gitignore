@@ -39,3 +39,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# PDFs de prueba generados
+/uploads/reports
