@@ -9,6 +9,8 @@ from models import User
 from database import SessionLocal
 from schemas import LoginRequest, LoginResponse, UserResponse
 import logging
+from routers.audit import AuditLogger, AuditAction
+from dependencies import get_current_user, get_db
 
 
 # Se crea router para incluir en main.py
@@ -19,16 +21,6 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-
-# Conexion a base de datos
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 # Configuración de seguridad
@@ -64,32 +56,6 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
-
-
-# Obtener el usuario actual desde el token
-
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(get_db)
-):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Could not validate credentials",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    
-    try:
-        payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
-        user_email: str = payload.get("sub") # CAMBIO: Obtener email del sub
-        if user_email is None:
-            raise credentials_exception
-    except JWTError:
-        raise credentials_exception
-    
-    user = db.query(User).filter(User.email == user_email).first() # CAMBIO: Buscar por email
-    if user is None:
-        raise credentials_exception
-    return user
 
 
 # Funcion para validar que los Roles sea uno de los definidos en la variable VALID_ROLES
@@ -137,6 +103,13 @@ def login(login_data: LoginRequest, db: Session = Depends(get_db)):
     
     if not user:
         logger.warning(f"Login fallido: Usuario con email '{login_data.email}' no encontrado.")
+        # 📌 Log de intento fallido
+        AuditLogger.log_action(
+            db=db,
+            action=AuditAction.USER_LOGIN_FAILED,
+            user_email=login_data.email,
+            resource_type="USER"
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Credenciales inválidas"
@@ -148,12 +121,19 @@ def login(login_data: LoginRequest, db: Session = Depends(get_db)):
     
     if not password_valid:
         logger.warning(f"Login fallido: Contraseña incorrecta para usuario '{user.email}'.")
+        # 📌 Log de intento fallido
+        AuditLogger.log_user_action(
+            db=db,
+            action=AuditAction.USER_LOGIN_FAILED,
+            user_id=user.id,
+            user_email=user.email,
+            resource_type="USER",
+            resource_id=str(user.id)
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Credenciales inválidas"
         )
-    
-    logger.info(f"Contraseña para '{user.email}' verificada correctamente.")
     
     if not user.is_active:
         logger.warning(f"Login fallido: Usuario '{user.email}' está inactivo.")
@@ -162,7 +142,15 @@ def login(login_data: LoginRequest, db: Session = Depends(get_db)):
             detail="Usuario inactivo"
         )
     
-    logger.info(f"Usuario '{user.email}' está activo.")
+    # 📌 Log de login exitoso
+    AuditLogger.log_user_action(
+        db=db,
+        action=AuditAction.USER_LOGIN,
+        user_id=user.id,
+        user_email=user.email,
+        resource_type="USER",
+        resource_id=str(user.id)
+    )
     
     access_token_expires = timedelta(minutes=30)
     access_token = create_access_token(

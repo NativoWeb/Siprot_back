@@ -87,8 +87,6 @@ class ProjectionSetting(Base):
     growth_rate = Column(Float)  # % anual
     years_to_project = Column(Integer, default=10)
 
-
-
 # ----------------------- PDF ------------------------------------
 
 class Reporte(Base):
@@ -173,3 +171,140 @@ class ConfiguracionReporte(Base):
     
     def __repr__(self):
         return f"<ConfiguracionReporte(tipo='{self.tipo_reporte}', nombre='{self.nombre_configuracion}')>"
+    
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Puede ser null para acciones del sistema
+    user_email = Column(String, nullable=True)
+    target_type = Column(String, nullable=True)  # Nueva columna
+    target_id = Column(String, nullable=True)
+    action = Column(String(100), nullable=False)  # CREATE_USER, DELETE_USER, CHANGE_ROLE, etc.
+    resource_type = Column(String(50), nullable=True)  # USER, DOCUMENT, SECTOR, etc. - Ahora puede ser NULL
+    resource_id = Column(String(50), nullable=True)  # ID del recurso afectado
+    old_values = Column(JSON, nullable=True)  # Valores anteriores
+    new_values = Column(JSON, nullable=True)  # Valores nuevos
+    ip_address = Column(String(45), nullable=True)  # IPv4 o IPv6
+    user_agent = Column(String(500), nullable=True)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+    details = Column(Text, nullable=True)  # Información adicional
+    
+    # Relación con usuario
+    user = relationship("User")
+    
+    def __repr__(self):
+        return f"<AuditLog(action='{self.action}', resource='{self.resource_type}:{self.resource_id}')>"
+
+class Sector(Base):
+    __tablename__ = "sectors"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(200), nullable=False, unique=True)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    creator = relationship("User")
+    
+    def __repr__(self):
+        return f"<Sector(name='{self.name}')>"
+
+class CoreLine(Base):
+    __tablename__ = "core_lines"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(200), nullable=False, unique=True)
+    description = Column(Text, nullable=True)
+    sector_id = Column(Integer, ForeignKey("sectors.id"), nullable=True)  # Opcional: asociar a sector
+    is_active = Column(Boolean, default=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    sector = relationship("Sector")
+    creator = relationship("User")
+    
+    def __repr__(self):
+        return f"<CoreLine(name='{self.name}')>"
+
+class DocumentType(Base):
+    __tablename__ = "document_types"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(200), nullable=False, unique=True)
+    description = Column(Text, nullable=True)
+    allowed_extensions = Column(JSON, nullable=True)  # ["pdf", "docx", "xlsx"]
+    is_active = Column(Boolean, default=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    creator = relationship("User")
+    
+    def __repr__(self):
+        return f"<DocumentType(name='{self.name}')>"
+
+class SystemConfiguration(Base):
+    __tablename__ = "system_configurations"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(100), nullable=False, unique=True)
+    value = Column(Text, nullable=True)
+    data_type = Column(String(20), default="string")  # string, integer, boolean, json
+    description = Column(Text, nullable=True)
+    category = Column(String(50), nullable=True)  # ui, email, security, etc.
+    is_public = Column(Boolean, default=False)  # Si puede ser accedido sin autenticación
+    updated_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    updater = relationship("User")
+    
+    def __repr__(self):
+        return f"<SystemConfiguration(key='{self.key}')>"
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    token = Column(String(255), nullable=False, unique=True)
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    used = Column(Boolean, default=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    user = relationship("User")
+    
+    def __repr__(self):
+        return f"<PasswordResetToken(user_id={self.user_id}, used={self.used})>"
+
+class Permission(Base):
+    __tablename__ = "permissions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False, unique=True)
+    description = Column(Text, nullable=True)
+    resource = Column(String(50), nullable=False)  # users, documents, reports, etc.
+    action = Column(String(50), nullable=False)    # create, read, update, delete, etc.
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    def __repr__(self):
+        return f"<Permission(name='{self.name}')>"
+
+class RolePermission(Base):
+    __tablename__ = "role_permissions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    role = Column(String(20), nullable=False)
+    permission_id = Column(Integer, ForeignKey("permissions.id"), nullable=False)
+    granted = Column(Boolean, default=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    permission = relationship("Permission")
+    creator = relationship("User")
+    
+    def __repr__(self):
+        return f"<RolePermission(role='{self.role}', permission_id={self.permission_id})>"
