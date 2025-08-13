@@ -2,27 +2,29 @@ import os
 from typing import Dict, Any, List
 from datetime import datetime
 from io import BytesIO
-
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib.units import inch
-from reportlab.lib.colors import HexColor, black, white, red, green, orange
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image
+from reportlab.lib.units import inch, cm
+from reportlab.lib.colors import HexColor, black, white, red, green, orange, grey
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image, KeepTogether
 from reportlab.platypus.frames import Frame
 from reportlab.platypus.doctemplate import PageTemplate, BaseDocTemplate
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT, TA_JUSTIFY
-from reportlab.graphics.shapes import Drawing, Rect, String
+from reportlab.graphics.shapes import Drawing, Rect, String, Circle
 from reportlab.graphics.charts.piecharts import Pie
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 from reportlab.graphics import renderPDF
-
+from reportlab.pdfgen import canvas
 from schemas import TipoReporte, ParametrosReporte
 
 class PDFService:
     def __init__(self):
         self.styles = getSampleStyleSheet()
         self._setup_custom_styles()
-    
+        # ⚠️ CAMBIAR AQUÍ: Ruta del logo cuando lo tengas
+        self.logo_path = "assets/logo_sena.png"  # Cambia esta ruta cuando tengas el logo real
+        self.company_name = "SENA"  # Nombre de la empresa para el pie de página
+        
     def _setup_custom_styles(self):
         """Configura estilos personalizados"""
         # Estilo para títulos principales
@@ -31,7 +33,7 @@ class PDFService:
             parent=self.styles['Heading1'],
             fontSize=24,
             spaceAfter=30,
-            textColor=HexColor('#2E86AB'),
+            textColor=HexColor('#00af00'),
             alignment=TA_CENTER
         ))
         
@@ -64,6 +66,62 @@ class PDFService:
             spaceAfter=6
         ))
     
+    def _draw_header_footer(self, canvas, doc):
+        """Dibuja el encabezado y pie de página personalizados en cada página"""
+        canvas.saveState()
+        
+        # Obtener dimensiones de la página
+        page_width = doc.pagesize[0]
+        page_height = doc.pagesize[1]
+        
+        # ENCABEZADO - Solo el logo circular
+        margin = 0.5 * inch
+        
+        # Logo circular en la parte superior izquierda
+        logo_x = margin + 0.5 * inch
+        logo_y = page_height - margin - 0.5 * inch
+        logo_radius = 0.35 * inch
+        
+        # Verificar si existe el archivo del logo
+        if os.path.exists(self.logo_path):
+            try:
+                # Si tienes un logo, úsalo
+                logo = Image(self.logo_path, width=logo_radius*2, height=logo_radius*2)
+                logo.drawOn(canvas, logo_x - logo_radius, logo_y - logo_radius)
+            except:
+                # Si hay error, dibujar círculo placeholder
+                self._draw_logo_placeholder(canvas, logo_x, logo_y, logo_radius)
+        else:
+            # Dibujar círculo placeholder para el logo
+            self._draw_logo_placeholder(canvas, logo_x, logo_y, logo_radius)
+        
+        # PIE DE PÁGINA
+        footer_height = 0.5 * inch
+        
+        # Texto del pie de página (nombre de la empresa) - CENTRADO
+        canvas.setFont("Helvetica-Bold", 10)
+        canvas.setFillColor(HexColor('#00af00'))
+        canvas.drawCentredString(page_width/2, margin + 0.2*inch, self.company_name)
+        
+        # Número de página
+        canvas.setFont("Helvetica", 10)
+        canvas.setFillColor(black)
+        page_num = canvas.getPageNumber()
+        canvas.drawRightString(page_width - margin - 0.2*inch, margin + 0.2*inch, str(page_num))
+        
+        canvas.restoreState()
+    
+    def _draw_logo_placeholder(self, canvas, x, y, radius):
+        """Dibuja un círculo placeholder para el logo"""
+        canvas.setStrokeColor(HexColor('#00af00'))
+        canvas.setLineWidth(2)
+        canvas.circle(x, y, radius, stroke=1, fill=0)
+        
+        # Texto placeholder dentro del círculo
+        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(HexColor('#00af00'))
+        canvas.drawCentredString(x, y, "LOGO")
+    
     def generar_pdf(
         self,
         tipo: TipoReporte,
@@ -71,45 +129,79 @@ class PDFService:
         parametros: ParametrosReporte,
         reporte_id: int
     ) -> str:
-        """Genera PDF del reporte usando ReportLab"""
+        """Genera PDF del reporte usando ReportLab con plantilla personalizada"""
         
         # Crear directorio si no existe
         output_dir = "uploads/reports"
         os.makedirs(output_dir, exist_ok=True)
         
+        # ⚠️ CREAR LOGO PLACEHOLDER si no existe (ELIMINAR cuando tengas el logo real)
+        if not os.path.exists(self.logo_path):
+            self._create_placeholder_logo()
+        
         # Nombre del archivo
         output_path = os.path.join(output_dir, f"reporte_{reporte_id}_{tipo.value}.pdf")
         
-        # Crear documento
+        # Crear documento con la plantilla personalizada
         doc = SimpleDocTemplate(
             output_path,
             pagesize=A4,
-            rightMargin=72,
-            leftMargin=72,
-            topMargin=72,
-            bottomMargin=18
+            rightMargin=0.75*inch,
+            leftMargin=0.75*inch,
+            topMargin=1.5*inch,  # Ajustado para dar espacio justo al logo
+            bottomMargin=1*inch  # Espacio para el footer
         )
         
-        # Contenido del documento
-        story = []
-        
-        # Generar contenido según tipo
-        if tipo == TipoReporte.INDICADORES:
-            story = self._generar_reporte_indicadores(datos, parametros, reporte_id)
-        elif tipo == TipoReporte.PROSPECTIVA:
-            story = self._generar_reporte_prospectiva(datos, parametros, reporte_id)
-        elif tipo == TipoReporte.OFERTA_EDUCATIVA:
-            story = self._generar_reporte_oferta(datos, parametros, reporte_id)
-        elif tipo == TipoReporte.CONSOLIDADO:
-            story = self._generar_reporte_consolidado(datos, parametros, reporte_id)
-        
-        # Construir PDF
-        doc.build(story)
+        # Configurar la función que dibujará header y footer en cada página
+        doc.build(
+            self._generar_contenido(tipo, datos, parametros, reporte_id),
+            onFirstPage=self._draw_header_footer,
+            onLaterPages=self._draw_header_footer
+        )
         
         return output_path
     
+    def _create_placeholder_logo(self):
+        """Crea un logo placeholder temporal (ELIMINAR cuando tengas el logo real)"""
+        from PIL import Image as PILImage, ImageDraw
+        
+        # Crear directorio si no existe
+        os.makedirs(os.path.dirname(self.logo_path), exist_ok=True)
+        
+        # Crear imagen circular simple como placeholder
+        size = (200, 200)
+        img = PILImage.new('RGBA', size, (255, 255, 255, 0))
+        draw = ImageDraw.Draw(img)
+        
+        # Dibujar círculo
+        draw.ellipse([10, 10, 190, 190], outline=(46, 134, 171, 255), width=5)
+        
+        # Guardar
+        img.save(self.logo_path, 'PNG')
+    
+    def _generar_contenido(
+        self,
+        tipo: TipoReporte,
+        datos: Dict[str, Any],
+        parametros: ParametrosReporte,
+        reporte_id: int
+    ) -> List:
+        """Genera el contenido del reporte según el tipo"""
+        
+        # Generar contenido según tipo
+        if tipo == TipoReporte.INDICADORES:
+            return self._generar_reporte_indicadores(datos, parametros, reporte_id)
+        elif tipo == TipoReporte.PROSPECTIVA:
+            return self._generar_reporte_prospectiva(datos, parametros, reporte_id)
+        elif tipo == TipoReporte.OFERTA_EDUCATIVA:
+            return self._generar_reporte_oferta(datos, parametros, reporte_id)
+        elif tipo == TipoReporte.CONSOLIDADO:
+            return self._generar_reporte_consolidado(datos, parametros, reporte_id)
+        
+        return []
+    
     def _generar_header(self, titulo: str, reporte_id: int) -> List:
-        """Genera el header del reporte"""
+        """Genera el contenido del header del reporte"""
         elements = []
         
         # Título principal
@@ -167,7 +259,7 @@ class PDFService:
         
         resumen_table = Table(resumen_data, colWidths=[3*inch, 2*inch])
         resumen_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#2E86AB')),
+            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#00af00')),
             ('TEXTCOLOR', (0, 0), (-1, 0), white),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
@@ -191,7 +283,6 @@ class PDFService:
             indicadores_data = [headers]
             
             for ind in indicadores:
-                color_estado = self._get_color_semaforo(ind.estado_semaforo)
                 indicadores_data.append([
                     ind.nombre,
                     f"{ind.valor_actual} {ind.unidad}",
@@ -200,11 +291,11 @@ class PDFService:
                     ind.estado_semaforo.upper()
                 ])
             
-            indicadores_table = Table(indicadores_data, colWidths=[2.5*inch, 1*inch, 1*inch, 1*inch, 0.8*inch])
+            indicadores_table = Table(indicadores_data, colWidths=[2.2*inch, 1*inch, 1*inch, 1*inch, 0.8*inch])
             
             # Aplicar estilos a la tabla
             table_style = [
-                ('BACKGROUND', (0, 0), (-1, 0), HexColor('#2E86AB')),
+                ('BACKGROUND', (0, 0), (-1, 0), HexColor('#00af00')),
                 ('TEXTCOLOR', (0, 0), (-1, 0), white),
                 ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
@@ -246,7 +337,8 @@ class PDFService:
         for escenario in escenarios:
             story.append(Paragraph(f"<b>{escenario['nombre']}</b>", self.styles['Highlight']))
             story.append(Paragraph(escenario['descripcion'], self.styles['CustomNormal']))
-            story.append(Paragraph(f"Probabilidad: {escenario['probabilidad']}% | Impacto: {escenario['impacto']}", self.styles['CustomNormal']))
+            story.append(Paragraph(f"Probabilidad: {escenario['probabilidad']}% | Impacto: {escenario['impacto']}", 
+                                 self.styles['CustomNormal']))
             
             # Recomendaciones
             story.append(Paragraph("Recomendaciones:", self.styles['CustomNormal']))
@@ -309,7 +401,7 @@ class PDFService:
         
         resumen_table = Table(resumen_data, colWidths=[3*inch, 2*inch])
         resumen_table.setStyle(TableStyle([
-            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#2E86AB')),
+            ('BACKGROUND', (0, 0), (-1, 0), HexColor('#00af00')),
             ('TEXTCOLOR', (0, 0), (-1, 0), white),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
@@ -497,7 +589,7 @@ class PDFService:
             drawing.add(String(220, legend_y - 45, f'Rojo: {rojo}', fontSize=12))
             
             return drawing
-            
+        
         except Exception as e:
             print(f"Error creando gráfico: {e}")
             return None
@@ -510,4 +602,3 @@ class PDFService:
             'rojo': HexColor('#dc3545')
         }
         return colores.get(estado.lower(), HexColor('#6c757d'))
-        

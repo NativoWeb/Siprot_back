@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from fastapi.responses import FileResponse
+from fastapi.responses import Response, FileResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from datetime import datetime
@@ -166,13 +166,14 @@ async def obtener_indicadores(
     data_service = DataService(db)
     return data_service.obtener_indicadores()
 
+
 @router.get("/{reporte_id}/descargar")
 async def descargar_reporte(
-    reporte_id: int, 
+    reporte_id: int,
     db: Session = Depends(get_db),
     current_user = Depends(get_current_user)
 ):
-    """Descarga el archivo PDF del reporte (solo si es del usuario)"""
+    """Descarga el archivo y lo elimina del filesystem después"""
     
     reporte = db.query(Reporte).filter(Reporte.id == reporte_id).first()
     
@@ -181,16 +182,40 @@ async def descargar_reporte(
     
     # Verificar permisos
     if reporte.usuario_id != current_user.id:
-        raise HTTPException(status_code=403, detail="No tienes permisos para descargar este reporte")
+        if not hasattr(current_user, 'role') or current_user.role not in ['superadmin', 'administrativo']:
+            raise HTTPException(status_code=403, detail="No tienes permisos para descargar este reporte")
     
-    if not reporte.archivo_path or not os.path.exists(reporte.archivo_path):
+    # Siempre servir desde la BD si está disponible
+    if reporte.archivo_contenido:
+        response = Response(
+            content=reporte.archivo_contenido,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename={reporte.archivo_nombre or f'reporte_{reporte_id}_{reporte.tipo}.pdf'}"
+            }
+        )
+        
+        # Eliminar archivo físico después de servir desde BD (limpieza)
+        if reporte.archivo_path and os.path.exists(reporte.archivo_path):
+            try:
+                os.remove(reporte.archivo_path)
+                reporte.archivo_path = None
+                db.commit()
+                print(f"✓ Archivo temporal eliminado: {reporte.archivo_path}")
+            except Exception as e:
+                print(f"⚠ No se pudo eliminar archivo temporal: {e}")
+        
+        return response
+    
+    # Fallback: servir desde filesystem si no está en BD
+    elif reporte.archivo_path and os.path.exists(reporte.archivo_path):
+        return FileResponse(
+            path=reporte.archivo_path,
+            filename=f"reporte_{reporte.id}_{reporte.tipo}.pdf",
+            media_type="application/pdf"
+        )
+    else:
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
-    
-    return FileResponse(
-        path=reporte.archivo_path,
-        filename=f"reporte_{reporte.id}_{reporte.tipo}.pdf",
-        media_type="application/pdf"
-    )
 
 @router.delete("/{reporte_id}")
 async def eliminar_reporte(
@@ -229,7 +254,6 @@ async def listar_todos_reportes_admin(
 ):
     """Lista TODOS los reportes (solo admin)"""
     
-    # Verificar que es admin
     if not hasattr(current_user, 'is_admin') or not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Solo administradores pueden acceder")
     
@@ -240,3 +264,44 @@ async def listar_todos_reportes_admin(
     
     reportes = query.order_by(Reporte.fecha_generacion.desc()).offset(skip).limit(limit).all()
     return [ReporteResponse.from_orm(reporte) for reporte in reportes]
+
+
+# nuevo ver pdf -----
+@router.get("/{reporte_id}/ver")
+async def ver_reporte(
+    reporte_id: int,
+    db: Session = Depends(get_db),
+    current_user = Depends(get_current_user)
+):
+    """Visualiza el PDF en el navegador sin descargarlo"""
+    
+    reporte = db.query(Reporte).filter(Reporte.id == reporte_id).first()
+    
+    if not reporte:
+        raise HTTPException(status_code=404, detail="Reporte no encontrado")
+    
+    if reporte.usuario_id != current_user.id:
+        if not hasattr(current_user, 'role') or current_user.role not in ['superadmin', 'administrativo']:
+            raise HTTPException(status_code=403, detail="No tienes permisos para ver este reporte")
+    
+    if reporte.archivo_contenido:
+        return Response(
+            content=reporte.archivo_contenido,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"inline; filename={reporte.archivo_nombre or f'reporte_{reporte_id}_{reporte.tipo}.pdf'}"
+            }
+        )
+    elif reporte.archivo_path and os.path.exists(reporte.archivo_path):
+        with open(reporte.archivo_path, 'rb') as f:
+            content = f.read()
+        return Response(
+            content=content,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"inline; filename=reporte_{reporte_id}_{reporte.tipo}.pdf"
+            }
+        )
+    else:
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+
