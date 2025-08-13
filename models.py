@@ -111,6 +111,10 @@ class Reporte(Base):
     tags = Column(JSON)  # Para categorización
     version = Column(String(10), default="1.0")
     compartido = Column(Boolean, default=False)
+
+    # NUEVAS COLUMNAS para almacenar el PDF en la BD
+    archivo_contenido = Column(LargeBinary)  # Contenido del PDF en bytes
+    archivo_nombre = Column(String(255))  # Nombre original del archivo
     
     def __repr__(self):
         return f"<Reporte(id={self.id}, tipo='{self.tipo}', estado='{self.estado}')>"
