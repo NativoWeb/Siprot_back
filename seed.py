@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 from database import SessionLocal, engine
 from models import Base, User
-from auth import get_password_hash
+from routers.auth import get_password_hash
 import logging
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

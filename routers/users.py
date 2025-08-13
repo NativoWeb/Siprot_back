@@ -1,14 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from typing import List
 from models import User
 from schemas import UserCreate, UserResponse, UserUpdate
-from routers.auth import get_db, get_password_hash, get_current_user, require_role, validate_role
+from routers.auth import get_password_hash, require_role, validate_role
+from dependencies import get_current_user, get_db
+from routers.audit import AuditLogger, AuditAction  # ✅ Importar para auditoría
 
 router = APIRouter(prefix="/users", tags=["Usuarios"])
 
 @router.post("/", response_model=UserResponse)
-def create_user(user_data: UserCreate, db: Session = Depends(get_db), current_user: User = Depends(require_role(["superadmin"]))):
+def create_user(
+    user_data: UserCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["superadmin"])),
+    request: Request = None
+):
     validate_role(user_data.role)
 
     if db.query(User).filter(User.email == user_data.email).first():
@@ -19,18 +26,64 @@ def create_user(user_data: UserCreate, db: Session = Depends(get_db), current_us
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+
+    # 🔹 Auditoría (movemos target_* a details)
+    AuditLogger.log_user_action(
+        db=db,
+        action=AuditAction.USER_CREATED,
+        user_id=current_user.id,
+        user_email=current_user.email,
+        target_type="user",        # 👈 aquí sí se manda
+        target_id=new_user.id,     # 👈 aquí también
+        details={"created_user_email": new_user.email},
+        request=request
+    )
+
     return UserResponse.from_orm(new_user)
 
 @router.get("/", response_model=List[UserResponse])
-def list_users(db: Session = Depends(get_db), current_user: User = Depends(require_role(["superadmin", "administrativo"]))):
-    return [UserResponse.from_orm(user) for user in db.query(User).all()]
+def list_users(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["superadmin", "administrativo"]))
+):
+    users = db.query(User).all()
+
+    # ✅ Log de auditoría
+    AuditLogger.log_user_action(
+        db=db,
+        action=AuditAction.USER_LIST_VIEWED,
+        user_id=current_user.id,
+        user_email=current_user.email,
+        target_type="user",
+        details={"total_users": len(users)},
+        request=request
+    )
+
+    return [UserResponse.from_orm(user) for user in users]
 
 @router.get("/me", response_model=UserResponse)
-def get_me(current_user: User = Depends(get_current_user)):
+def get_me(request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # ✅ Log de auditoría
+    AuditLogger.log_user_action(
+        db=db,
+        action=AuditAction.USER_PROFILE_VIEWED,
+        user_id=current_user.id,
+        user_email=current_user.email,
+        target_type="user",
+        target_id=current_user.id,
+        request=request
+    )
     return UserResponse.from_orm(current_user)
 
 @router.put("/{user_id}", response_model=UserResponse)
-def update_user(user_id: int, user_data: UserUpdate, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def update_user(
+    request: Request,
+    user_id: int,
+    user_data: UserUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
@@ -48,23 +101,24 @@ def update_user(user_id: int, user_data: UserUpdate, db: Session = Depends(get_d
 
     db.commit()
     db.refresh(user)
+
+    # ✅ Log de auditoría
+    AuditLogger.log_user_action(
+        db=db,
+        action=AuditAction.USER_UPDATED,
+        user_id=current_user.id,
+        user_email=current_user.email,
+        target_type="user",
+        target_id=user.id,
+        details=update_data,
+        request=request
+    )
+
     return UserResponse.from_orm(user)
-
-@router.get("/roles")
-def get_roles():
-    return {
-        "roles": ["superadmin", "administrativo", "planeacion", "instructor"],
-        "role_descriptions": {
-            "superadmin": "Super Administrador - Acceso completo al sistema",
-            "administrativo": "Administrativo - Gestión de usuarios y reportes", 
-            "planeacion": "Planeación - Gestión de documentos y escenarios",
-            "instructor": "Instructor - Consulta de documentos y recursos"
-        }
-    }
-
 
 @router.delete("/{user_id}")
 def delete_user(
+    request: Request,
     user_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["superadmin"]))
@@ -74,7 +128,6 @@ def delete_user(
     if not user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-    # Bloquear eliminación de superadmin y planeacion
     if user.role in ["planeacion", "superadmin"]:
         raise HTTPException(
             status_code=400,
@@ -82,17 +135,34 @@ def delete_user(
                    'En caso que ya no quiera que se use un usuario, lo mejor es quitar el estado activo.'
         )
 
-    # Desactivar en lugar de eliminar
     if not user.is_active:
         raise HTTPException(status_code=400, detail="El usuario ya está inactivo")
 
     user.is_active = False
     db.commit()
 
+    # ✅ Log de auditoría
+    AuditLogger.log_user_action(
+        db=db,
+        action=AuditAction.USER_DEACTIVATED,
+        user_id=current_user.id,
+        user_email=current_user.email,
+        target_type="user",
+        target_id=user.id,
+        details={"deactivated_user_email": user.email},
+        request=request
+    )
+
     return {"message": f"Usuario '{user.email}' desactivado exitosamente"}
 
 @router.put("/{user_id}/password")
-def change_password(user_id: int, password_data: dict, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+def change_password(
+    request: Request,
+    user_id: int,
+    password_data: dict,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     if current_user.role != "superadmin" and current_user.id != user_id:
         raise HTTPException(status_code=403, detail="No autorizado")
 
@@ -106,4 +176,17 @@ def change_password(user_id: int, password_data: dict, db: Session = Depends(get
 
     user.password = get_password_hash(new_password)
     db.commit()
+
+    # ✅ Log de auditoría
+    AuditLogger.log_user_action(
+        db=db,
+        action=AuditAction.USER_PASSWORD_CHANGED,
+        user_id=current_user.id,
+        user_email=current_user.email,
+        target_type="user",
+        target_id=user.id,
+        details={"changed_user_email": user.email},
+        request=request
+    )
+
     return {"message": "Contraseña actualizada exitosamente"}

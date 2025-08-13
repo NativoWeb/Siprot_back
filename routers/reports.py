@@ -254,7 +254,6 @@ async def listar_todos_reportes_admin(
 ):
     """Lista TODOS los reportes (solo admin)"""
     
-    # Verificar que es admin
     if not hasattr(current_user, 'is_admin') or not current_user.is_admin:
         raise HTTPException(status_code=403, detail="Solo administradores pueden acceder")
     
@@ -281,13 +280,11 @@ async def ver_reporte(
     if not reporte:
         raise HTTPException(status_code=404, detail="Reporte no encontrado")
     
-    # Verificar permisos
     if reporte.usuario_id != current_user.id:
         if not hasattr(current_user, 'role') or current_user.role not in ['superadmin', 'administrativo']:
             raise HTTPException(status_code=403, detail="No tienes permisos para ver este reporte")
     
     if reporte.archivo_contenido:
-        # inline en lugar de attachment para que se abra en el navegador
         return Response(
             content=reporte.archivo_contenido,
             media_type="application/pdf",
@@ -296,7 +293,6 @@ async def ver_reporte(
             }
         )
     elif reporte.archivo_path and os.path.exists(reporte.archivo_path):
-        # Para archivos en filesystem
         with open(reporte.archivo_path, 'rb') as f:
             content = f.read()
         return Response(
@@ -308,3 +304,4 @@ async def ver_reporte(
         )
     else:
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
+
