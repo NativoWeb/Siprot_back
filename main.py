@@ -7,7 +7,7 @@ from database import engine, SessionLocal
 from models import Base
 
 # Routers principales
-from routers import auth, users, documents, programs, reports
+from routers import auth, users, documents, programs, reports, scenarios
 # Auditoría
 try:
     from routers.audit import router as audit_router
@@ -66,6 +66,7 @@ app.include_router(users.router)
 app.include_router(documents.router)
 app.include_router(programs.router)
 app.include_router(reports.router)
+app.include_router(scenarios.router)
 
 if AUDIT_AVAILABLE:
     app.include_router(audit_router)
@@ -90,4 +91,6 @@ def startup_event():
 
     db.close()
     print("🚀 Sistema de Gestión SIPROT iniciado correctamente.")
+
+
 

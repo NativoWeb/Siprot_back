@@ -20,6 +20,7 @@ class AuditAction(str, Enum):
     USER_LOGIN = "user_login"
     USER_LOGOUT = "user_logout"
     USER_LOGIN_FAILED = "user_login_failed"
+    USER_LIST_VIEWED = "user_list_viewed"
     
     # Acciones de documentos
     DOCUMENT_UPLOADED = "document_uploaded"
@@ -97,7 +98,11 @@ class AuditLogger:
         user_agent: Optional[str] = None
     ) -> AuditLog:
         """Registra una acción en el log de auditoría"""
-        
+
+        # ✅ Si no viene resource_type/id, tomar target_type/id
+        resource_type = resource_type or target_type
+        resource_id = resource_id or target_id
+
         audit_log = AuditLog(
             action=action.value,
             user_id=user_id,
@@ -140,6 +145,10 @@ class AuditLogger:
         if request:
             ip_address = request.client.host if hasattr(request, 'client') else None
             user_agent = request.headers.get("user-agent") if hasattr(request, 'headers') else None
+
+        # ✅ Si no se pasa resource_type/id, tomarlos del target
+        resource_type = resource_type or target_type
+        resource_id = resource_id or target_id
         
         return AuditLogger.log_action(
             db=db,
@@ -154,70 +163,7 @@ class AuditLogger:
             ip_address=ip_address,
             user_agent=user_agent
         )
-    
-    @staticmethod
-    def get_audit_logs(db: Session, filters: AuditLogFilter) -> List[AuditLog]:
-        """Obtiene logs de auditoría con filtros"""
-        
-        query = db.query(AuditLog)
-        
-        if filters.action:
-            query = query.filter(AuditLog.action == filters.action)
-        
-        if filters.user_id:
-            query = query.filter(AuditLog.user_id == filters.user_id)
-        
-        if filters.user_email:
-            query = query.filter(AuditLog.user_email.ilike(f"%{filters.user_email}%"))
-        
-        if filters.target_type:
-            query = query.filter(AuditLog.target_type == filters.target_type)
-        
-        if filters.resource_type:
-            query = query.filter(AuditLog.resource_type == filters.resource_type)
-        
-        if filters.date_from:
-            query = query.filter(AuditLog.timestamp >= filters.date_from)
-        
-        if filters.date_to:
-            query = query.filter(AuditLog.timestamp <= filters.date_to)
-        
-        query = query.order_by(AuditLog.timestamp.desc())
-        query = query.offset(filters.offset).limit(filters.limit)
-        
-        return query.all()
-    
-    @staticmethod
-    def get_user_activity(db: Session, user_id: int, limit: int = 50) -> List[AuditLog]:
-        """Obtiene la actividad reciente de un usuario específico"""
-        
-        return db.query(AuditLog)\
-            .filter(AuditLog.user_id == user_id)\
-            .order_by(AuditLog.timestamp.desc())\
-            .limit(limit)\
-            .all()
-    
-    @staticmethod
-    def get_critical_actions(db: Session, hours: int = 24) -> List[AuditLog]:
-        """Obtiene acciones críticas de las últimas X horas"""
-        
-        critical_actions = [
-            AuditAction.USER_CREATED.value,
-            AuditAction.USER_DELETED.value,
-            AuditAction.USER_ROLE_CHANGED.value,
-            AuditAction.USER_PASSWORD_RESET.value,
-            AuditAction.CATALOG_SECTOR_DELETED.value,
-            AuditAction.CATALOG_CORE_LINE_DELETED.value,
-            AuditAction.SYSTEM_CONFIG_UPDATED.value
-        ]
-        
-        from_time = datetime.utcnow().replace(hour=datetime.utcnow().hour - hours)
-        
-        return db.query(AuditLog)\
-            .filter(AuditLog.action.in_(critical_actions))\
-            .filter(AuditLog.timestamp >= from_time)\
-            .order_by(AuditLog.timestamp.desc())\
-            .all()
+
 
 # ==================== ENDPOINTS DE AUDITORÍA ====================
 

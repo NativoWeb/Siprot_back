@@ -227,3 +227,77 @@ class EstadisticasReportes(BaseModel):
     reportes_con_error: int
     reportes_por_tipo: Dict[str, int]
     tiempo_promedio_generacion: Optional[float] = None
+
+# Schemas para escenarios
+class ScenarioTypeEnum(str, Enum):
+    TENDENCIAL = "tendencial"
+    OPTIMISTA = "optimista"
+    PESIMISTA = "pesimista"
+
+class ScenarioParametersBase(BaseModel):
+    growth_multiplier: float = Field(ge=0.1, le=5.0, description="Multiplicador de crecimiento")
+    demand_multiplier: float = Field(ge=0.1, le=5.0, description="Multiplicador de demanda")
+    economic_factor: float = Field(ge=0.1, le=3.0, description="Factor económico")
+    technology_adoption: float = Field(ge=0.1, le=2.0, description="Adopción tecnológica")
+
+class ScenarioCreate(BaseModel):
+    name: str = Field(max_length=100)
+    scenario_type: ScenarioTypeEnum
+    description: Optional[str] = None
+    parameters: ScenarioParametersBase
+
+class ScenarioUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=100)
+    description: Optional[str] = None
+    parameters: Optional[ScenarioParametersBase] = None
+    is_active: Optional[bool] = None
+
+class ScenarioResponse(BaseModel):
+    id: int
+    name: str
+    scenario_type: ScenarioTypeEnum
+    description: Optional[str]
+    parameters: ScenarioParametersBase
+    is_active: bool
+    created_by: int
+    created_at: datetime
+    updated_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class ProjectionRequest(BaseModel):
+    scenario_ids: List[int] = Field(description="IDs de escenarios a proyectar")
+    sectors: Optional[List[str]] = Field(None, description="Sectores específicos (opcional)")
+    years_ahead: int = Field(default=10, ge=1, le=20, description="Años a proyectar")
+
+class ProjectionDataPoint(BaseModel):
+    year: int
+    sector: str
+    indicator_type: str
+    base_value: float
+    projected_value: float
+    multiplier_applied: float
+
+class ScenarioProjectionResponse(BaseModel):
+    scenario_id: int
+    scenario_name: str
+    scenario_type: ScenarioTypeEnum
+    projections: List[ProjectionDataPoint]
+    summary: Dict[str, Any]
+
+class ScenarioComparisonResponse(BaseModel):
+    scenarios: List[ScenarioProjectionResponse]
+    comparison_metrics: Dict[str, Any]
+    recommendations: List[str]
+
+class ScenarioConfigurationUpdate(BaseModel):
+    scenario_type: ScenarioTypeEnum
+    parameters: Dict[str, float]
+
+class ScenarioExportRequest(BaseModel):
+    scenario_ids: List[int]
+    format: str = Field(default="json", pattern="^(json|csv|excel)$")
+    include_charts: bool = True
+    include_summary: bool = True
+

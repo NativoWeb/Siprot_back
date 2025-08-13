@@ -33,11 +33,9 @@ def create_user(
         action=AuditAction.USER_CREATED,
         user_id=current_user.id,
         user_email=current_user.email,
-        details={
-            "created_user_email": new_user.email,
-            "target_type": "user",
-            "target_id": new_user.id
-        },
+        target_type="user",        # 👈 aquí sí se manda
+        target_id=new_user.id,     # 👈 aquí también
+        details={"created_user_email": new_user.email},
         request=request
     )
 

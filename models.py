@@ -176,19 +176,19 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)  # Puede ser null para acciones del sistema
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     user_email = Column(String, nullable=True)
-    target_type = Column(String, nullable=True)  # Nueva columna
+    target_type = Column(String, nullable=True)
     target_id = Column(String, nullable=True)
-    action = Column(String(100), nullable=False)  # CREATE_USER, DELETE_USER, CHANGE_ROLE, etc.
-    resource_type = Column(String(50), nullable=True)  # USER, DOCUMENT, SECTOR, etc. - Ahora puede ser NULL
-    resource_id = Column(String(50), nullable=True)  # ID del recurso afectado
-    old_values = Column(JSON, nullable=True)  # Valores anteriores
-    new_values = Column(JSON, nullable=True)  # Valores nuevos
-    ip_address = Column(String(45), nullable=True)  # IPv4 o IPv6
+    action = Column(String(100), nullable=False)
+    resource_type = Column(String(50), nullable=True)
+    resource_id = Column(String(50), nullable=True)
+    old_values = Column(JSON, nullable=True)
+    new_values = Column(JSON, nullable=True)
+    ip_address = Column(String(45), nullable=True)
     user_agent = Column(String(500), nullable=True)
     timestamp = Column(DateTime(timezone=True), server_default=func.now())
-    details = Column(Text, nullable=True)  # Información adicional
+    details = Column(JSON, nullable=True)  # CAMBIADO: de Text a JSON
     
     # Relación con usuario
     user = relationship("User")
@@ -308,3 +308,61 @@ class RolePermission(Base):
     
     def __repr__(self):
         return f"<RolePermission(role='{self.role}', permission_id={self.permission_id})>"
+    
+class ScenarioType(enum.Enum):
+    TENDENCIAL = "tendencial"
+    OPTIMISTA = "optimista"
+    PESIMISTA = "pesimista"
+
+class Scenario(Base):
+    __tablename__ = "scenarios"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)
+    scenario_type = Column(String(20), nullable=False)  # tendencial, optimista, pesimista
+    description = Column(Text, nullable=True)
+    parameters = Column(JSON, nullable=False)  # Multiplicadores y configuraciones
+    is_active = Column(Boolean, default=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    creator = relationship("User")
+    
+    def __repr__(self):
+        return f"<Scenario(name='{self.name}', type='{self.scenario_type}')>"
+
+class ScenarioProjection(Base):
+    __tablename__ = "scenario_projections"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    scenario_id = Column(Integer, ForeignKey("scenarios.id"), nullable=False)
+    sector = Column(String(100), nullable=False)
+    year = Column(Integer, nullable=False)
+    projected_value = Column(Float, nullable=False)
+    base_value = Column(Float, nullable=False)  # Valor base del modelo LSTM
+    multiplier_applied = Column(Float, nullable=False)
+    indicator_type = Column(String(50), nullable=False)  # demanda, oferta, etc.
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    scenario = relationship("Scenario")
+    
+    def __repr__(self):
+        return f"<ScenarioProjection(scenario_id={self.scenario_id}, year={self.year})>"
+
+class ScenarioConfiguration(Base):
+    __tablename__ = "scenario_configurations"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    scenario_type = Column(String(20), nullable=False)
+    parameter_name = Column(String(100), nullable=False)
+    parameter_value = Column(Float, nullable=False)
+    description = Column(Text, nullable=True)
+    updated_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    updater = relationship("User")
+    
+    def __repr__(self):
+        return f"<ScenarioConfiguration(type='{self.scenario_type}', param='{self.parameter_name}')>"
+
