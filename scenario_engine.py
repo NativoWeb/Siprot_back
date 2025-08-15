@@ -154,7 +154,6 @@ class ScenarioEngine:
                             indicator_type=indicator
                         )
                         self.db.add(proj)
-        
         self.db.commit()
     
     def _generate_fallback_projections(self, scenario: Scenario, years_ahead: int) -> List[Dict]:

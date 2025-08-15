@@ -8,7 +8,9 @@ from enum import Enum
 import logging
 from models import AuditLog
 from dependencies import get_current_user
-# ==================== MODELOS DE AUDITORÍA ====================
+from fastapi import Request
+
+# ==================== ENUM DE ACCIONES DE AUDITORÍA ====================
 
 class AuditAction(str, Enum):
     # Acciones de usuarios
@@ -19,25 +21,31 @@ class AuditAction(str, Enum):
     USER_PASSWORD_RESET = "user_password_reset"
     USER_LOGIN = "user_login"
     USER_LOGOUT = "user_logout"
+    RESOURCE_READ = "RESOURCE_READ"
+    RESOURCE_CREATE = "RESOURCE_CREATE"
+    RESOURCE_UPDATE = "RESOURCE_UPDATE"
+    RESOURCE_DELETE = "RESOURCE_DELETE"
+    RESOURCE_EXPORT = "RESOURCE_EXPORT"
+    SYSTEM_CONFIGURATION = "SYSTEM_CONFIGURATION"
     USER_LOGIN_FAILED = "user_login_failed"
     USER_LIST_VIEWED = "user_list_viewed"
-    
+
     # Acciones de documentos
     DOCUMENT_UPLOADED = "document_uploaded"
     DOCUMENT_UPDATED = "document_updated"
     DOCUMENT_DELETED = "document_deleted"
     DOCUMENT_DOWNLOADED = "document_downloaded"
-    
+
     # Acciones de programas
     PROGRAM_CREATED = "program_created"
     PROGRAM_UPDATED = "program_updated"
     PROGRAM_DELETED = "program_deleted"
-    
+
     # Acciones de reportes
     REPORT_GENERATED = "report_generated"
     REPORT_DOWNLOADED = "report_downloaded"
     REPORT_DELETED = "report_deleted"
-    
+
     # Acciones de catálogos (R8.4)
     CATALOG_SECTOR_CREATED = "catalog_sector_created"
     CATALOG_SECTOR_UPDATED = "catalog_sector_updated"
@@ -45,10 +53,12 @@ class AuditAction(str, Enum):
     CATALOG_CORE_LINE_CREATED = "catalog_core_line_created"
     CATALOG_CORE_LINE_UPDATED = "catalog_core_line_updated"
     CATALOG_CORE_LINE_DELETED = "catalog_core_line_deleted"
-    
+
     # Acciones de configuración (R8.6)
     SYSTEM_CONFIG_UPDATED = "system_config_updated"
 
+
+# ==================== ESQUEMAS Pydantic ====================
 
 class AuditLogResponse(BaseModel):
     id: int
@@ -60,12 +70,15 @@ class AuditLogResponse(BaseModel):
     resource_type: Optional[str]
     resource_id: Optional[str]
     details: Optional[Dict[str, Any]]
+    old_values: Optional[Dict[str, Any]]
+    new_values: Optional[Dict[str, Any]]
     ip_address: Optional[str]
     user_agent: Optional[str]
     timestamp: datetime
-    
+
     class Config:
         from_attributes = True
+
 
 class AuditLogFilter(BaseModel):
     action: Optional[str] = None
@@ -78,11 +91,12 @@ class AuditLogFilter(BaseModel):
     limit: int = 100
     offset: int = 0
 
+
 # ==================== UTILIDADES DE AUDITORÍA ====================
 
 class AuditLogger:
     """Clase para manejar el logging de auditoría"""
-    
+
     @staticmethod
     def log_action(
         db: Session,
@@ -95,11 +109,12 @@ class AuditLogger:
         resource_id: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None,
         ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None
+        user_agent: Optional[str] = None,
+        old_values: Optional[Dict[str, Any]] = None,
+        new_values: Optional[Dict[str, Any]] = None
     ) -> AuditLog:
         """Registra una acción en el log de auditoría"""
 
-        # ✅ Si no viene resource_type/id, tomar target_type/id
         resource_type = resource_type or target_type
         resource_id = resource_id or target_id
 
@@ -112,18 +127,20 @@ class AuditLogger:
             resource_type=resource_type,
             resource_id=str(resource_id) if resource_id else None,
             details=details,
+            old_values=old_values,
+            new_values=new_values,
             ip_address=ip_address,
             user_agent=user_agent
         )
-        
+
         db.add(audit_log)
         db.commit()
         db.refresh(audit_log)
-        
+
         logging.info(f"AUDIT: {action.value} by {user_email} on {target_type}:{target_id}")
-        
+
         return audit_log
-    
+
     @staticmethod
     def log_user_action(
         db: Session,
@@ -135,21 +152,22 @@ class AuditLogger:
         resource_type: Optional[str] = None,
         resource_id: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None,
-        request = None
+        request=None,
+        old_values: Optional[Dict[str, Any]] = None,
+        new_values: Optional[Dict[str, Any]] = None
     ) -> AuditLog:
         """Registra una acción de usuario con información de la request"""
-        
+
         ip_address = None
         user_agent = None
-        
+
         if request:
             ip_address = request.client.host if hasattr(request, 'client') else None
             user_agent = request.headers.get("user-agent") if hasattr(request, 'headers') else None
 
-        # ✅ Si no se pasa resource_type/id, tomarlos del target
         resource_type = resource_type or target_type
         resource_id = resource_id or target_id
-        
+
         return AuditLogger.log_action(
             db=db,
             action=action,
@@ -161,16 +179,16 @@ class AuditLogger:
             resource_id=resource_id,
             details=details,
             ip_address=ip_address,
-            user_agent=user_agent
+            user_agent=user_agent,
+            old_values=old_values,
+            new_values=new_values
         )
 
 
 # ==================== ENDPOINTS DE AUDITORÍA ====================
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
 from database import get_db
-from dependencies import get_current_user
 from models import User
 
 router = APIRouter(prefix="/audit", tags=["audit"])
@@ -183,16 +201,14 @@ async def get_audit_logs(
     resource_type: Optional[str] = Query(None, description="Filtrar por tipo de recurso"),
     date_from: Optional[datetime] = Query(None, description="Fecha desde (YYYY-MM-DD HH:MM:SS)"),
     date_to: Optional[datetime] = Query(None, description="Fecha hasta (YYYY-MM-DD HH:MM:SS)"),
-    limit: int = Query(100, ge=1, le=1000, description="Límite de resultados"),
-    offset: int = Query(0, ge=0, description="Offset para paginación"),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Obtiene logs de auditoría (solo superadmin)"""
-    
     if current_user.role != "superadmin":
         raise HTTPException(status_code=403, detail="Solo superadministradores pueden acceder a logs de auditoría")
-    
+
     filters = AuditLogFilter(
         action=action,
         user_email=user_email,
@@ -203,9 +219,10 @@ async def get_audit_logs(
         limit=limit,
         offset=offset
     )
-    
+
     logs = AuditLogger.get_audit_logs(db, filters)
     return logs
+
 
 @router.get("/user/{user_id}/activity", response_model=List[AuditLogResponse])
 async def get_user_activity(
@@ -214,44 +231,39 @@ async def get_user_activity(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Obtiene actividad de un usuario específico"""
-    
     if current_user.role != "superadmin" and current_user.id != user_id:
         raise HTTPException(status_code=403, detail="No tienes permisos para ver esta actividad")
-    
+
     activity = AuditLogger.get_user_activity(db, user_id, limit)
     return activity
 
+
 @router.get("/critical", response_model=List[AuditLogResponse])
 async def get_critical_actions(
-    hours: int = Query(24, ge=1, le=168, description="Horas hacia atrás para buscar"),
+    hours: int = Query(24, ge=1, le=168),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    """Obtiene acciones críticas recientes (solo superadmin)"""
-    
     if current_user.role != "superadmin":
         raise HTTPException(status_code=403, detail="Solo superadministradores pueden acceder a acciones críticas")
-    
+
     critical_actions = AuditLogger.get_critical_actions(db, hours)
     return critical_actions
+
 
 @router.get("/actions", response_model=List[str])
 async def get_available_actions(
     current_user: User = Depends(get_current_user)
 ):
-    """Obtiene lista de acciones disponibles para filtrar"""
-    
     if current_user.role != "superadmin":
         raise HTTPException(status_code=403, detail="Solo superadministradores pueden acceder a esta información")
-    
+
     return [action.value for action in AuditAction]
+
 
 # ==================== CONFIGURACIÓN ====================
 
 def setup_audit_logging():
-    """Configura el logging de auditoría"""
-    
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -260,3 +272,13 @@ def setup_audit_logging():
             logging.StreamHandler()
         ]
     )
+
+# ==================== FUNCIONES AUXILIARES ====================
+
+def get_client_ip(request: Request) -> str:
+    """Obtiene la IP del cliente desde la request."""
+    return request.client.host if request and hasattr(request, "client") else "unknown"
+
+def get_user_agent(request: Request) -> str:
+    """Obtiene el User-Agent del cliente desde la request."""
+    return request.headers.get("user-agent", "unknown") if request and hasattr(request, "headers") else "unknown"

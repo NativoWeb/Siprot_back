@@ -301,3 +301,29 @@ class ScenarioExportRequest(BaseModel):
     include_charts: bool = True
     include_summary: bool = True
 
+
+# ----------------------- PERMISSIONS ------------------------------------
+
+class PermissionResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    resource: str
+    action: str
+
+    class Config:
+        from_attributes = True
+
+class RolePermissionCreate(BaseModel):
+    permission_id: int
+    granted: bool
+
+class RolePermissionResponse(BaseModel):
+    id: int
+    role: str
+    permission_id: int
+    granted: bool
+    created_by: Optional[int] = None
+
+    class Config:
+        from_attributes = True
