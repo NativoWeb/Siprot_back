@@ -93,12 +93,15 @@ def generate_scenarios_from_csv(
         for scenario_type in scenario_types:
             try:
                 scenario_enum = ScenarioType(scenario_type)
+                
+                # Buscar escenario existente
                 existing_scenario = db.query(Scenario).filter(
                     Scenario.scenario_type == scenario_type,
                     Scenario.name.like(f"%{document.title}%")
                 ).first()
                 
                 if not existing_scenario:
+                    # Crear nuevo escenario
                     scenario_data = {
                         "name": f"{engine.scenarios[scenario_enum].name} - {document.title}",
                         "scenario_type": scenario_type,
@@ -113,6 +116,7 @@ def generate_scenarios_from_csv(
                 else:
                     scenario = existing_scenario
                 
+                # Generar proyecciones específicas para este escenario
                 projections = engine.generate_scenario_projections(
                     scenario.id, df, years_ahead
                 )
@@ -128,14 +132,24 @@ def generate_scenarios_from_csv(
                         "id": document.id,
                         "title": document.title,
                         "filename": document.original_filename
+                    },
+                    "metadata": {
+                        "total_years": len(projections),
+                        "historical_years": len([p for p in projections if p['year'] <= pd.Timestamp.now().year]),
+                        "future_years": len([p for p in projections if p['year'] > pd.Timestamp.now().year]),
+                        "indicators": list(projections[0]['values'].keys()) if projections else []
                     }
                 }
                 
-            except ValueError:
-                logger.error(f"Tipo de escenario inválido: {scenario_type}")
+                logger.info(f"Escenario {scenario_type} generado exitosamente con {len(projections)} puntos de datos")
+                
+            except ValueError as ve:
+                logger.error(f"Tipo de escenario inválido: {scenario_type} - {str(ve)}")
                 continue
             except Exception as e:
                 logger.error(f"Error generando escenario {scenario_type}: {str(e)}")
+                import traceback
+                logger.error(f"Traceback completo: {traceback.format_exc()}")
                 continue
         
         if not scenarios_data:
@@ -151,60 +165,50 @@ def generate_scenarios_from_csv(
         raise
     except Exception as e:
         logger.error(f"Error inesperado generando escenarios: {str(e)}")
+        import traceback
+        logger.error(f"Traceback completo: {traceback.format_exc()}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error interno del servidor"
-        )
-
-@router.get("/list")
-def list_scenarios(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["planeacion", "directivo", "instructor"]))
-):
-    try:
-        scenarios = db.query(Scenario).order_by(Scenario.created_at.desc()).all()
-        
-        return [
-            {
-                "id": scenario.id,
-                "name": scenario.name,
-                "scenario_type": scenario.scenario_type,
-                "description": scenario.description,
-                "parameters": scenario.parameters,
-                "created_at": scenario.created_at.isoformat(),
-                "created_by": scenario.created_by
-            }
-            for scenario in scenarios
-        ]
-    except Exception as e:
-        logger.error(f"Error listando escenarios: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error al obtener escenarios"
+            detail=f"Error interno del servidor: {str(e)}"
         )
 
 @router.get("/compare")
 def compare_scenarios(
-    scenario_ids: str,
+    scenario_ids: List[int],
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["planeacion", "directivo"]))
+    current_user: User = Depends(require_role(["planeacion", "directivo", "instructor"]))
 ):
+    """Compara múltiples escenarios lado a lado"""
     try:
-        ids = [int(id.strip()) for id in scenario_ids.split(',') if id.strip().isdigit()]
+        scenarios = db.query(Scenario).filter(Scenario.id.in_(scenario_ids)).all()
         
-        if len(ids) < 2:
+        if len(scenarios) != len(scenario_ids):
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Se requieren al menos 2 escenarios para comparar"
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Algunos escenarios no fueron encontrados"
             )
         
         engine = ScenarioEngine(db)
-        comparison = engine.compare_scenarios(ids)
+        comparison_data = []
         
-        return comparison
+        for scenario in scenarios:
+            # Aquí podrías regenerar las proyecciones o usar datos almacenados
+            comparison_data.append({
+                "scenario_id": scenario.id,
+                "scenario_name": scenario.name,
+                "scenario_type": scenario.scenario_type,
+                "color": get_scenario_color(scenario.scenario_type),
+                "parameters": scenario.parameters
+            })
         
-    except HTTPException:
-        raise
+        return {
+            "scenarios": comparison_data,
+            "comparison_metadata": {
+                "total_scenarios": len(scenarios),
+                "scenario_types": list(set(s.scenario_type for s in scenarios))
+            }
+        }
+        
     except Exception as e:
         logger.error(f"Error comparando escenarios: {str(e)}")
         raise HTTPException(
@@ -212,28 +216,11 @@ def compare_scenarios(
             detail="Error al comparar escenarios"
         )
 
-@router.post("/initialize-defaults")
-def initialize_default_scenarios(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["planeacion", "superadmin"]))
-):
-    try:
-        engine = ScenarioEngine(db)
-        engine.initialize_default_scenarios(current_user.id)
-        
-        return {"message": "Escenarios predefinidos inicializados correctamente"}
-        
-    except Exception as e:
-        logger.error(f"Error inicializando escenarios predefinidos: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error al inicializar escenarios predefinidos"
-        )
-
 def get_scenario_color(scenario_type: str) -> str:
+    """Obtiene el color asociado a cada tipo de escenario"""
     colors = {
-        "tendencial": "#3B82F6",
-        "optimista": "#10B981",
-        "pesimista": "#EF4444"
+        "tendencial": "#3B82F6",  # Azul
+        "optimista": "#10B981",   # Verde
+        "pesimista": "#EF4444"    # Rojo
     }
-    return colors.get(scenario_type, "#6B7280")
+    return colors.get(scenario_type, "#6B7280")  # Gris por defecto
