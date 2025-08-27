@@ -2,12 +2,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import os
+import logging
 
+# Imports de configuración de base de datos y modelos
 from database import engine, SessionLocal
 from models import Base
 
-# Routers principales
-from routers import auth, users, documents, programs, reports, scenarios, permissions
+# Imports de todos los routers principales
+from routers import auth, users, documents, programs, reports, scenarios, permissions, dofa
 # Auditoría
 try:
     from routers.audit import router as audit_router
@@ -33,12 +35,16 @@ except ImportError:
     print("Warning: System config module not found.")
     CONFIG_AVAILABLE = False
 
-# Crear las tablas
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Sistema de Gestión SIPROT", version="1.0.0")
+# Crear aplicación FastAPI
+app = FastAPI(
+    title="Sistema de Gestión SIPROT", 
+    description="API para gestión de documentos, programas, análisis DOFA y reportes",
+    version="1.0.0"
+)
 
-# CORS
+# Configurar CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # ⚠️ Cambiar en producción
@@ -47,7 +53,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Directorios necesarios
 UPLOAD_DIRS = [
     "uploads/reports",
     "uploads/docs",
@@ -57,7 +62,6 @@ UPLOAD_DIRS = [
 for folder in UPLOAD_DIRS:
     os.makedirs(folder, exist_ok=True)
 
-# Montar archivos estáticos
 app.mount("/static/reports", StaticFiles(directory="uploads/reports"), name="reports")
 
 # Incluir routers
@@ -68,13 +72,31 @@ app.include_router(programs.router)
 app.include_router(reports.router)
 app.include_router(scenarios.router)
 app.include_router(permissions.router)
+app.include_router(dofa.router)
 
 if AUDIT_AVAILABLE:
     app.include_router(audit_router)
 if CATALOGS_AVAILABLE:
     app.include_router(catalogs.router)
 
-# ==================== EVENTO DE INICIO ====================
+# Configurar logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+# Endpoint de salud
+@app.get("/")
+async def root():
+    return {
+        "message": "Sistema de Gestión SIPROT - API",
+        "version": "1.0.0",
+        "status": "active"
+    }
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
 
 @app.on_event("startup")
 def startup_event():
@@ -93,5 +115,6 @@ def startup_event():
     db.close()
     print("🚀 Sistema de Gestión SIPROT iniciado correctamente.")
 
-
-
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

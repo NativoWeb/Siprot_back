@@ -76,30 +76,42 @@ class DocumentResponse(BaseModel):
         from_attributes = True
 
 class ProgramCreate(BaseModel):
+    code: str
     name: str
     level: str
     sector: str
     core_line: str
-    quota: Optional[int] = None
+    capacity: int
+    current_students: Optional[int] = 0
     region: Optional[str] = None
+    description: Optional[str] = None
 
 class ProgramUpdate(BaseModel):
+    code: Optional[str] = None
     name: Optional[str] = None
     level: Optional[str] = None
     sector: Optional[str] = None
     core_line: Optional[str] = None
-    quota: Optional[int] = None
+    capacity: Optional[int] = None
+    current_students: Optional[int] = None
     region: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
 
 class ProgramResponse(BaseModel):
     id: int
+    code: str
     name: str
     level: str
     sector: str
     core_line: str
-    quota: Optional[int]
+    capacity: Optional[int]
+    current_students: Optional[int]
     region: Optional[str]
+    description: Optional[str]
     created_at: datetime
+    updated_at: datetime
+    created_by: int
 
     class Config:
         from_attributes = True
@@ -327,3 +339,92 @@ class RolePermissionResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+class DofaCategory(str, Enum):
+    DEBILIDADES = "D"
+    OPORTUNIDADES = "O" 
+    FORTALEZAS = "F"
+    AMENAZAS = "A"
+
+class DofaPriority(str, Enum):
+    ALTA = "alta"
+    MEDIA = "media"
+    BAJA = "baja"
+
+class DofaItemCreate(BaseModel):
+    category: DofaCategory = Field(..., description="Categoría DOFA: D, O, F, A")
+    text: str = Field(..., min_length=1, max_length=1000, description="Texto del ítem DOFA")
+    source: Optional[str] = Field(None, max_length=500, description="Fuente o referencia")
+    responsible: Optional[str] = Field(None, max_length=200, description="Responsable")
+    priority: Optional[DofaPriority] = Field(None, description="Prioridad del ítem")
+
+class DofaItemUpdate(BaseModel):
+    text: Optional[str] = Field(None, min_length=1, max_length=1000)
+    source: Optional[str] = Field(None, max_length=500)
+    responsible: Optional[str] = Field(None, max_length=200)
+    priority: Optional[DofaPriority] = None
+
+class DofaItemResponse(BaseModel):
+    id: int
+    category: str
+    text: str
+    source: Optional[str]
+    responsible: Optional[str]
+    priority: Optional[str]
+    created_at: datetime
+    updated_at: Optional[datetime]
+    created_by: int
+    updated_by: Optional[int]
+    is_active: bool
+
+    class Config:
+        from_attributes = True
+
+class DofaMatrixResponse(BaseModel):
+    debilidades: List[DofaItemResponse]
+    oportunidades: List[DofaItemResponse]
+    fortalezas: List[DofaItemResponse]
+    amenazas: List[DofaItemResponse]
+    total_items: int
+    last_updated: Optional[datetime]
+
+class DofaChangeLogResponse(BaseModel):
+    id: int
+    dofa_item_id: int
+    action: str
+    changed_at: datetime
+    changed_by: int
+    details: Optional[str]
+    user_email: Optional[str]
+
+    class Config:
+        from_attributes = True
+
+class DofaExportRequest(BaseModel):
+    format: str = Field(..., pattern="^(pdf|docx)$", description="Formato de exportación: pdf o docx")
+    include_metadata: bool = Field(True, description="Incluir metadatos (fechas, responsables)")
+    title: Optional[str] = Field("Análisis DOFA", max_length=200, description="Título del documento")
+
+# ==================== AUTH SCHEMAS ====================
+
+class LoginRequest(BaseModel):
+    email: str = Field(..., description="Email del usuario")
+    password: str = Field(..., description="Contraseña")
+
+class UserResponse(BaseModel):
+    id: int
+    email: str
+    first_name: Optional[str]
+    last_name: Optional[str]
+    role: str
+    is_active: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class LoginResponse(BaseModel):
+    message: str
+    user: UserResponse
+    access_token: str
+    token_type: str
