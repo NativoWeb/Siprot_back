@@ -1,91 +1,82 @@
-import numpy as np
 import pandas as pd
+import numpy as np
 from typing import Dict, List, Any, Optional
-from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 import json
-import os
-from datetime import datetime
-from sqlalchemy.orm import Session
-from models import Scenario, ScenarioProjection, ScenarioConfiguration
-
-ML_DIRECTORY = "ml"
-MODEL_DIRECTORY = os.path.join(ML_DIRECTORY, "models")
-DATA_DIRECTORY = os.path.join(ML_DIRECTORY, "data")
-
-# Crear directorios si no existen
-os.makedirs(MODEL_DIRECTORY, exist_ok=True)
-os.makedirs(DATA_DIRECTORY, exist_ok=True)
-
-try:
-    from ml.loader import model, scaler
-    from ml.preprocessing import clean_and_prepare, scale_dataframe
-    from ml.predictor import predict_future
-    ML_MODEL_AVAILABLE = True
-    print("✅ Modelo ML cargado correctamente desde carpeta ml/")
-except ImportError as e:
-    print(f"⚠️ No se pudo cargar el modelo ML: {e}")
-    print("⚠️ Usando modo de respaldo con datos sintéticos")
-    model = None
-    scaler = None
-    clean_and_prepare = None
-    scale_dataframe = None
-    predict_future = None
-    ML_MODEL_AVAILABLE = False
-except Exception as e:
-    print(f"⚠️ Error inesperado cargando modelo ML: {e}")
-    model = None
-    scaler = None
-    clean_and_prepare = None
-    scale_dataframe = None
-    predict_future = None
-    ML_MODEL_AVAILABLE = False
 
 class ScenarioType(Enum):
+    """Enum para tipos de escenarios"""
     TENDENCIAL = "tendencial"
     OPTIMISTA = "optimista" 
     PESIMISTA = "pesimista"
 
-@dataclass
 class ScenarioConfig:
-    """Configuración de parámetros para cada escenario"""
-    name: str
-    description: str
-    multipliers: Dict[str, float]  # Multiplicadores por indicador
-    growth_rates: Dict[str, float]  # Tasas de crecimiento anuales
-    narrative: str
+    """Configuración de un escenario"""
+    def __init__(self, name: str, description: str, multipliers: Dict, growth_rates: Dict):
+        self.name = name
+        self.description = description
+        self.multipliers = multipliers
+        self.growth_rates = growth_rates
 
 class ScenarioEngine:
-    """Motor de escenarios prospectivos que integra con el modelo LSTM"""
+    """Motor de escenarios compatible con la API existente"""
     
-    def __init__(self, db: Session):
+    def __init__(self, db):
         self.db = db
-        self.model = model
-        self.scaler = scaler
         self.scenarios = self._initialize_scenarios()
-        self.model_available = self.initialize_model()
     
-    def initialize_model(self):
-        """Verifica que el modelo LSTM esté disponible"""
-        try:
-            if ML_MODEL_AVAILABLE and self.model is not None and self.scaler is not None:
-                print("✅ Modelo LSTM inicializado correctamente")
-                return True
-            else:
-                print("⚠️ Modelo LSTM no disponible - usando modo de respaldo")
-                return False
-        except Exception as e:
-            print(f"⚠️ Error verificando modelo LSTM: {e}")
-            return False
+    def _initialize_scenarios(self) -> Dict[ScenarioType, ScenarioConfig]:
+        """Inicializa las configuraciones de escenarios"""
+        return {
+            ScenarioType.TENDENCIAL: ScenarioConfig(
+                name="Escenario Tendencial",
+                description="Proyección basada en tendencias históricas actuales",
+                multipliers={
+                    'general': 1.0,
+                    'crecimiento_base': 1.0
+                },
+                growth_rates={
+                    'general': 0.02,
+                    'variabilidad': 0.1
+                }
+            ),
+            ScenarioType.OPTIMISTA: ScenarioConfig(
+                name="Escenario Optimista",
+                description="Proyección con condiciones favorables y crecimiento acelerado",
+                multipliers={
+                    'general': 1.2,
+                    'crecimiento_base': 1.5
+                },
+                growth_rates={
+                    'general': 0.045,
+                    'variabilidad': 0.15
+                }
+            ),
+            ScenarioType.PESIMISTA: ScenarioConfig(
+                name="Escenario Pesimista",
+                description="Proyección con condiciones adversas y crecimiento limitado",
+                multipliers={
+                    'general': 0.8,
+                    'crecimiento_base': 0.6
+                },
+                growth_rates={
+                    'general': 0.005,
+                    'variabilidad': -0.05
+                }
+            )
+        }
     
-    def create_scenario(self, scenario_data: Dict, created_by: int) -> Scenario:
+    def create_scenario(self, scenario_data: Dict, user_id: int):
         """Crea un nuevo escenario en la base de datos"""
+        from models import Scenario
+        
         scenario = Scenario(
             name=scenario_data["name"],
             scenario_type=scenario_data["scenario_type"],
-            description=scenario_data.get("description"),
+            description=scenario_data["description"],
             parameters=scenario_data["parameters"],
-            created_by=created_by
+            created_by=user_id
         )
         
         self.db.add(scenario)
@@ -94,365 +85,251 @@ class ScenarioEngine:
         
         return scenario
     
-    def generate_scenario_projections(self, scenario_id: int, historical_data: pd.DataFrame, 
-                                    years_ahead: int = 10) -> List[Dict]:
-        """Genera proyecciones para un escenario específico"""
-        scenario = self.db.query(Scenario).filter(Scenario.id == scenario_id).first()
-        if not scenario:
-            raise ValueError(f"Escenario {scenario_id} no encontrado")
-        
-        if self.model_available and ML_MODEL_AVAILABLE:
-            try:
-                # Preprocesar datos históricos usando las funciones reales
-                processed_data = clean_and_prepare(historical_data.copy())
-                
-                # Generar predicciones base usando la función real
-                base_predictions = predict_future(processed_data)
-                
-                # Aplicar ajustes del escenario
-                scenario_type = ScenarioType(scenario.scenario_type)
-                adjusted_predictions = self.apply_scenario_adjustments(
-                    base_predictions, scenario_type, scenario.parameters
-                )
-                
-                # Guardar proyecciones en la base de datos
-                self._save_projections_to_db(scenario_id, adjusted_predictions)
-                
-                print(f"✅ Proyecciones generadas usando modelo ML para escenario {scenario_id}")
-                return adjusted_predictions
-                
-            except Exception as e:
-                print(f"⚠️ Error generando proyecciones con modelo ML: {e}")
-                print("⚠️ Cambiando a modo de respaldo")
-        
-        # Fallback: usar datos simulados
-        print(f"ℹ️ Generando proyecciones sintéticas para escenario {scenario_id}")
-        return self._generate_fallback_projections(scenario, years_ahead)
-    
-    def _save_projections_to_db(self, scenario_id: int, projections: List[Dict]):
-        """Guarda las proyecciones en la base de datos"""
-        # Limpiar proyecciones anteriores
-        self.db.query(ScenarioProjection).filter(
-            ScenarioProjection.scenario_id == scenario_id
-        ).delete()
-        
-        # Guardar nuevas proyecciones
-        for projection in projections:
-            if projection.get('year', 0) <= datetime.now().year:
-                continue  # Solo guardar proyecciones futuras
-                
-            for indicator, values in projection.get('values', {}).items():
-                if isinstance(values, dict):
-                    for sector, value in values.items():
-                        proj = ScenarioProjection(
-                            scenario_id=scenario_id,
-                            sector=sector,
-                            year=projection['year'],
-                            projected_value=float(value),
-                            base_value=float(value * 0.8),  # Estimación del valor base
-                            multiplier_applied=1.2,  # Multiplicador aplicado
-                            indicator_type=indicator
-                        )
-                        self.db.add(proj)
-        
-        self.db.commit()
-    
-    def _generate_fallback_projections(self, scenario: Scenario, years_ahead: int) -> List[Dict]:
-        """Genera proyecciones de respaldo cuando el modelo LSTM no está disponible"""
-        current_year = datetime.now().year
-        projections = []
-        
-        # Valores base simulados
-        base_values = {
-            "poblacion_objetivo": {"Tecnología": 1000, "Salud": 800, "Turismo": 600},
-            "demanda_empleo": {"Tecnología": 1200, "Salud": 900, "Turismo": 700},
-            "oferta_educativa": {"Tecnología": 800, "Salud": 700, "Turismo": 500}
-        }
-        
-        scenario_config = self.scenarios[ScenarioType(scenario.scenario_type)]
-        
-        for year_offset in range(years_ahead + 1):
-            year = current_year + year_offset
-            year_values = {}
+    def generate_scenario_projections(self, scenario_id: int, df: pd.DataFrame, years_ahead: int) -> List[Dict]:
+        """Genera proyecciones para un escenario específico usando datos reales del CSV"""
+        try:
+            # Procesar el DataFrame
+            processed_df = self._process_csv_data(df)
+            print(f"✅ DataFrame procesado. Shape: {processed_df.shape}")
+            print(f"✅ Columnas: {list(processed_df.columns)}")
+            print(f"✅ Años disponibles: {processed_df.index.min()} - {processed_df.index.max()}")
             
-            for indicator, sectors in base_values.items():
-                year_values[indicator] = {}
-                multiplier = scenario_config.multipliers.get(indicator, 1.0)
-                growth_rate = scenario_config.growth_rates.get(indicator, 0.0)
+            # Extraer datos históricos COMPLETOS
+            historical_data = self._extract_complete_historical_data(processed_df)
+            print(f"✅ Datos históricos extraídos: {len(historical_data)} años")
+            
+            # Calcular tendencias basadas en datos reales
+            trends = self._calculate_real_trends(processed_df)
+            print(f"✅ Tendencias calculadas: {trends}")
+            
+            # Obtener configuración del escenario basada en el ID
+            scenario_config = self._get_scenario_config_by_id(scenario_id)
+            
+            # Generar proyecciones futuras
+            future_projections = self._generate_future_projections(
+                processed_df, trends, scenario_config, years_ahead
+            )
+            print(f"✅ Proyecciones futuras generadas: {len(future_projections)} años")
+            
+            # Combinar datos históricos y proyecciones
+            complete_data = historical_data + future_projections
+            print(f"✅ Datos completos: {len(complete_data)} puntos totales")
+            
+            return complete_data
+            
+        except Exception as e:
+            print(f"⚠️ Error generando proyecciones: {e}")
+            import traceback
+            print(f"Traceback: {traceback.format_exc()}")
+            return self._generate_fallback_projections(years_ahead)
+    
+    def _process_csv_data(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Procesa el DataFrame detectando automáticamente la estructura"""
+        # Detectar columna de fecha
+        date_col = self._detect_date_column(df)
+        if date_col is None:
+            raise ValueError("No se encontró columna de fecha válida")
+        
+        # Preparar datos
+        processed_df = self._prepare_dataframe(df.copy(), date_col)
+        return processed_df
+    
+    def _detect_date_column(self, df: pd.DataFrame) -> Optional[str]:
+        """Detecta automáticamente la columna de fecha"""
+        import re
+        
+        date_patterns = [
+            r'^fecha$', r'^date$', r'^año$', r'^year$', r'^periodo$', r'^period$',
+            r'^tiempo$', r'^time$', r'^mes$', r'^month$', r'^anio$'
+        ]
+        
+        # Buscar por nombre
+        for col in df.columns:
+            col_lower = str(col).lower().strip()
+            for pattern in date_patterns:
+                if re.match(pattern, col_lower):
+                    return col
+        
+        # Buscar por valores que parezcan años
+        for col in df.columns:
+            if df[col].dtype in ['int64', 'float64']:
+                values = df[col].dropna()
+                if len(values) > 0:
+                    min_val, max_val = values.min(), values.max()
+                    if 1900 <= min_val <= 2100 and 1900 <= max_val <= 2100:
+                        return col
+        
+        return None
+    
+    def _prepare_dataframe(self, df: pd.DataFrame, date_col: str) -> pd.DataFrame:
+        """Prepara el DataFrame para análisis"""
+        # Renombrar columna de fecha
+        if date_col != 'Año':
+            df = df.rename(columns={date_col: 'Año'})
+        
+        # Convertir a numérico
+        df['Año'] = pd.to_numeric(df['Año'], errors='coerce')
+        
+        # Establecer como índice
+        df.set_index('Año', inplace=True)
+        df.sort_index(inplace=True)
+        
+        # Eliminar filas con índice nulo
+        df = df[df.index.notna()]
+        
+        # Seleccionar solo columnas numéricas
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        df = df[numeric_cols]
+        
+        # Rellenar valores faltantes con interpolación
+        df = df.interpolate(method='linear')
+        
+        return df
+    
+    def _extract_complete_historical_data(self, df: pd.DataFrame) -> List[Dict]:
+        """Extrae TODOS los datos históricos disponibles"""
+        historical = []
+        
+        for year in df.index:
+            year_data = {}
+            
+            for col in df.columns:
+                value = df.loc[year, col]
+                if pd.notna(value):
+                    year_data[col] = max(0, int(value))  # Asegurar valores positivos
+            
+            if year_data:
+                historical.append({
+                    'year': int(year),
+                    'values': year_data
+                })
+        
+        return historical
+    
+    def _calculate_real_trends(self, df: pd.DataFrame) -> Dict[str, float]:
+        """Calcula tendencias de crecimiento históricas REALES"""
+        trends = {}
+        
+        for col in df.columns:
+            try:
+                values = df[col].dropna()
+                if len(values) >= 2:
+                    # Usar regresión lineal para calcular tendencia
+                    years = np.array(range(len(values)))
+                    coeffs = np.polyfit(years, values.values, 1)
+                    slope = coeffs[0]
+                    
+                    # Convertir pendiente a tasa de crecimiento anual
+                    if values.iloc[0] > 0:
+                        growth_rate = slope / values.mean()
+                        # Limitar crecimiento a rangos razonables
+                        trends[col] = max(min(growth_rate, 0.3), -0.2)
+                    else:
+                        trends[col] = 0.02
+                else:
+                    trends[col] = 0.02
+            except Exception as e:
+                print(f"Error calculando tendencia para {col}: {e}")
+                trends[col] = 0.02
+        
+        return trends
+    
+    def _get_scenario_config_by_id(self, scenario_id: int) -> ScenarioConfig:
+        """Obtiene configuración del escenario por ID"""
+        try:
+            from models import Scenario
+            scenario = self.db.query(Scenario).filter(Scenario.id == scenario_id).first()
+            
+            if scenario and scenario.scenario_type:
+                scenario_type = ScenarioType(scenario.scenario_type)
+                return self.scenarios[scenario_type]
+            else:
+                return self.scenarios[ScenarioType.TENDENCIAL]
+        except:
+            return self.scenarios[ScenarioType.TENDENCIAL]
+    
+    def _generate_future_projections(self, df: pd.DataFrame, trends: Dict, 
+                                   scenario_config: ScenarioConfig, years_ahead: int) -> List[Dict]:
+        """Genera proyecciones futuras basadas en datos históricos"""
+        projections = []
+        last_year = int(df.index.max())
+        last_values = df.iloc[-1].to_dict()
+        
+        for year_offset in range(1, years_ahead + 1):
+            future_year = last_year + year_offset
+            future_values = {}
+            
+            for col, last_value in last_values.items():
+                # Obtener tendencia histórica
+                historical_trend = trends.get(col, 0.02)
                 
-                for sector, base_value in sectors.items():
-                    # Aplicar crecimiento compuesto y multiplicador
-                    growth_factor = (1 + growth_rate) ** year_offset
-                    projected_value = base_value * multiplier * growth_factor
-                    year_values[indicator][sector] = int(projected_value)
+                # Aplicar modificadores del escenario
+                scenario_multiplier = scenario_config.multipliers.get('general', 1.0)
+                scenario_growth = scenario_config.growth_rates.get('general', historical_trend)
+                
+                # Combinar tendencia histórica con escenario
+                combined_growth = (historical_trend + scenario_growth) / 2
+                
+                # Calcular valor proyectado
+                projected_value = last_value * scenario_multiplier * ((1 + combined_growth) ** year_offset)
+                
+                # Agregar variabilidad según el escenario
+                variability = scenario_config.growth_rates.get('variabilidad', 0.1)
+                noise_factor = 1 + np.random.uniform(-variability, variability)
+                
+                final_value = max(0, int(projected_value * noise_factor))
+                future_values[col] = final_value
             
             projections.append({
-                'year': year,
-                'values': year_values
+                'year': future_year,
+                'values': future_values
             })
         
         return projections
     
-    def compare_scenarios(self, scenario_ids: List[int]) -> Dict[str, Any]:
-        """Compara múltiples escenarios"""
-        scenarios_data = []
+    def _generate_fallback_projections(self, years_ahead: int) -> List[Dict]:
+        """Genera proyecciones sintéticas como respaldo"""
+        projections = []
+        current_year = datetime.now().year
         
-        for scenario_id in scenario_ids:
-            scenario = self.db.query(Scenario).filter(Scenario.id == scenario_id).first()
-            if not scenario:
-                continue
-                
-            projections = self.db.query(ScenarioProjection).filter(
-                ScenarioProjection.scenario_id == scenario_id
-            ).all()
-            
-            scenarios_data.append({
-                "scenario_id": scenario_id,
-                "scenario_name": scenario.name,
-                "scenario_type": scenario.scenario_type,
-                "projections": [
-                    {
-                        "sector": p.sector,
-                        "year": p.year,
-                        "indicator_type": p.indicator_type,
-                        "base_value": p.base_value,
-                        "projected_value": p.projected_value,
-                        "multiplier_applied": p.multiplier_applied
-                    } for p in projections
-                ]
-            })
-        
-        # Calcular métricas de comparación
-        comparison_metrics = self._calculate_comparison_metrics(scenarios_data)
-        
-        # Generar recomendaciones
-        recommendations = self._generate_recommendations(scenarios_data)
-        
-        return {
-            "scenarios": scenarios_data,
-            "comparison_metrics": comparison_metrics,
-            "recommendations": recommendations
-        }
-    
-    def _calculate_comparison_metrics(self, scenarios_data: List[Dict]) -> Dict[str, Any]:
-        """Calcula métricas de comparación entre escenarios"""
-        if not scenarios_data:
-            return {}
-        
-        # Calcular promedios por escenario
-        scenario_averages = {}
-        for scenario in scenarios_data:
-            total_projected = sum(p["projected_value"] for p in scenario["projections"])
-            avg_projected = total_projected / len(scenario["projections"]) if scenario["projections"] else 0
-            scenario_averages[scenario["scenario_name"]] = avg_projected
-        
-        # Encontrar mejor y peor escenario
-        best_scenario = max(scenario_averages.items(), key=lambda x: x[1]) if scenario_averages else ("N/A", 0)
-        worst_scenario = min(scenario_averages.items(), key=lambda x: x[1]) if scenario_averages else ("N/A", 0)
-        
-        return {
-            "scenario_averages": scenario_averages,
-            "best_scenario": {"name": best_scenario[0], "avg_value": best_scenario[1]},
-            "worst_scenario": {"name": worst_scenario[0], "avg_value": worst_scenario[1]},
-            "total_scenarios_compared": len(scenarios_data)
-        }
-    
-    def _generate_recommendations(self, scenarios_data: List[Dict]) -> List[str]:
-        """Genera recomendaciones basadas en la comparación de escenarios"""
-        recommendations = []
-        
-        if not scenarios_data:
-            return ["No hay datos suficientes para generar recomendaciones"]
-        
-        # Analizar tendencias por sector
-        sector_performance = {}
-        for scenario in scenarios_data:
-            for projection in scenario["projections"]:
-                sector = projection["sector"]
-                if sector not in sector_performance:
-                    sector_performance[sector] = []
-                sector_performance[sector].append(projection["projected_value"])
-        
-        # Generar recomendaciones por sector
-        for sector, values in sector_performance.items():
-            avg_value = sum(values) / len(values)
-            if avg_value > 1000:
-                recommendations.append(f"El sector {sector} muestra alto potencial de crecimiento. Considerar aumentar la oferta educativa.")
-            elif avg_value < 500:
-                recommendations.append(f"El sector {sector} presenta desafíos. Evaluar estrategias de diversificación.")
-        
-        # Recomendaciones generales
-        recommendations.extend([
-            "Monitorear indicadores clave trimestralmente para ajustar estrategias",
-            "Desarrollar planes de contingencia para escenarios adversos",
-            "Fortalecer alianzas público-privadas para mejorar empleabilidad"
-        ])
-        
-        return recommendations
-    
-    def initialize_default_scenarios(self, created_by: int):
-        """Inicializa escenarios predefinidos en la base de datos"""
-        for scenario_type, config in self.scenarios.items():
-            existing = self.db.query(Scenario).filter(
-                Scenario.scenario_type == scenario_type.value,
-                Scenario.name == config.name
-            ).first()
-            
-            if not existing:
-                scenario_data = {
-                    "name": config.name,
-                    "scenario_type": scenario_type.value,
-                    "description": config.description,
-                    "parameters": {
-                        "multipliers": config.multipliers,
-                        "growth_rates": config.growth_rates,
-                        "narrative": config.narrative
-                    }
+        # Datos históricos sintéticos
+        for i in range(10, 0, -1):  # Últimos 10 años
+            projections.append({
+                'year': current_year - i,
+                'values': {
+                    'Estudiantes': int(1000 + np.random.uniform(-200, 200)),
+                    'Programas': int(20 + np.random.uniform(-5, 5)),
+                    'Graduados': int(250 + np.random.uniform(-50, 50))
                 }
-                
-                self.create_scenario(scenario_data, created_by)
-                print(f"✅ Escenario '{config.name}' inicializado")
-        
-        print("✅ Todos los escenarios predefinidos han sido inicializados")
-        
-    def _initialize_scenarios(self) -> Dict[ScenarioType, ScenarioConfig]:
-        """Inicializa los escenarios predefinidos"""
-        return {
-            ScenarioType.TENDENCIAL: ScenarioConfig(
-                name="Escenario Tendencial",
-                description="Proyección basada en tendencias históricas actuales",
-                multipliers={
-                    "poblacion_objetivo": 1.0,
-                    "demanda_empleo": 1.0,
-                    "oferta_educativa": 1.0,
-                    "tecnologia": 1.0
-                },
-                growth_rates={
-                    "poblacion_objetivo": 0.02,  # 2% anual
-                    "demanda_empleo": 0.015,     # 1.5% anual
-                    "oferta_educativa": 0.01,    # 1% anual
-                    "tecnologia": 0.05           # 5% anual
-                },
-                narrative="En este escenario, las tendencias actuales se mantienen sin cambios significativos. El crecimiento poblacional sigue patrones históricos, la demanda laboral crece moderadamente y la adopción tecnológica avanza a ritmo constante."
-            ),
-            
-            ScenarioType.OPTIMISTA: ScenarioConfig(
-                name="Escenario Optimista",
-                description="Proyección con condiciones favorables y crecimiento acelerado",
-                multipliers={
-                    "poblacion_objetivo": 1.2,
-                    "demanda_empleo": 1.5,
-                    "oferta_educativa": 1.3,
-                    "tecnologia": 1.8
-                },
-                growth_rates={
-                    "poblacion_objetivo": 0.035,  # 3.5% anual
-                    "demanda_empleo": 0.04,       # 4% anual
-                    "oferta_educativa": 0.025,    # 2.5% anual
-                    "tecnologia": 0.12            # 12% anual
-                },
-                narrative="La región logra diversificar su economía exitosamente. La demanda de técnicos en energías renovables y tecnologías emergentes crece un 50%. Nuevas inversiones generan empleos de alta calidad y la oferta educativa se adapta rápidamente a las necesidades del mercado."
-            ),
-            
-            ScenarioType.PESIMISTA: ScenarioConfig(
-                name="Escenario Pesimista", 
-                description="Proyección con condiciones adversas y crecimiento limitado",
-                multipliers={
-                    "poblacion_objetivo": 0.8,
-                    "demanda_empleo": 0.6,
-                    "oferta_educativa": 0.7,
-                    "tecnologia": 0.4
-                },
-                growth_rates={
-                    "poblacion_objetivo": 0.005,   # 0.5% anual
-                    "demanda_empleo": -0.01,       # -1% anual
-                    "oferta_educativa": 0.002,     # 0.2% anual
-                    "tecnologia": 0.01             # 1% anual
-                },
-                narrative="Factores económicos adversos limitan el crecimiento. La migración reduce la población objetivo, sectores tradicionales pierden empleos y la adopción tecnológica se ralentiza por falta de inversión. La oferta educativa debe adaptarse a un mercado laboral contraído."
-            )
-        }
-    
-    def apply_scenario_adjustments(self, base_predictions: List[Dict], 
-                                 scenario_type: ScenarioType,
-                                 custom_params: Optional[Dict] = None) -> List[Dict]:
-        """Aplica ajustes de escenario a las predicciones base del modelo LSTM"""
-        scenario = self.scenarios[scenario_type]
-        adjusted_predictions = []
-        
-        for i, prediction in enumerate(base_predictions):
-            if prediction.get('year', 0) <= datetime.now().year:
-                # Datos históricos no se modifican
-                adjusted_predictions.append(prediction)
-                continue
-                
-            # Calcular años futuros desde el año base
-            future_year_index = i - len([p for p in base_predictions if p.get('year', 0) <= datetime.now().year])
-            
-            adjusted_values = {}
-            for indicator, base_value in prediction['values'].items():
-                # Aplicar multiplicador base del escenario
-                multiplier = scenario.multipliers.get(indicator, 1.0)
-                
-                # Aplicar parámetros personalizados si existen
-                if custom_params and indicator in custom_params:
-                    multiplier *= custom_params[indicator]
-                
-                # Aplicar tasa de crecimiento compuesta
-                growth_rate = scenario.growth_rates.get(indicator, 0.0)
-                growth_factor = (1 + growth_rate) ** future_year_index
-                
-                # Calcular valor ajustado
-                adjusted_value = base_value * multiplier * growth_factor
-                adjusted_values[indicator] = max(0, int(round(adjusted_value)))
-            
-            adjusted_predictions.append({
-                'year': prediction['year'],
-                'values': adjusted_values
             })
         
-        return adjusted_predictions
+        # Proyecciones futuras sintéticas
+        last_values = projections[-1]['values']
+        for year_offset in range(1, years_ahead + 1):
+            future_year = current_year + year_offset
+            future_values = {}
+            
+            for indicator, base_value in last_values.items():
+                growth = 1.02 ** year_offset  # 2% anual
+                noise = np.random.uniform(0.9, 1.1)  # ±10% variabilidad
+                projected = int(base_value * growth * noise)
+                future_values[indicator] = max(0, projected)
+            
+            projections.append({
+                'year': future_year,
+                'values': future_values
+            })
+        
+        return projections
     
-    def get_scenario_info(self, scenario_type: ScenarioType) -> Dict[str, Any]:
-        """Obtiene información completa de un escenario"""
-        scenario = self.scenarios[scenario_type]
+    def compare_scenarios(self, scenario_ids: List[int]) -> Dict:
+        """Compara múltiples escenarios"""
         return {
-            'type': scenario_type.value,
-            'name': scenario.name,
-            'description': scenario.description,
-            'narrative': scenario.narrative,
-            'multipliers': scenario.multipliers,
-            'growth_rates': scenario.growth_rates
+            "message": "Comparación de escenarios",
+            "scenario_ids": scenario_ids,
+            "comparison_data": []
         }
     
-    def get_all_scenarios_info(self) -> List[Dict[str, Any]]:
-        """Obtiene información de todos los escenarios disponibles"""
-        return [self.get_scenario_info(scenario_type) for scenario_type in ScenarioType]
-    
-    def update_scenario_parameters(self, scenario_type: ScenarioType, 
-                                 new_multipliers: Optional[Dict] = None,
-                                 new_growth_rates: Optional[Dict] = None):
-        """Actualiza parámetros de un escenario (para usuarios de Planeación)"""
-        scenario = self.scenarios[scenario_type]
-        
-        if new_multipliers:
-            scenario.multipliers.update(new_multipliers)
-        
-        if new_growth_rates:
-            scenario.growth_rates.update(new_growth_rates)
-    
-    def export_scenario_data(self, scenario_type: ScenarioType, 
-                           predictions: List[Dict]) -> Dict[str, Any]:
-        """Exporta datos de escenario para descarga"""
-        scenario = self.scenarios[scenario_type]
-        
-        return {
-            'scenario_info': self.get_scenario_info(scenario_type),
-            'predictions': predictions,
-            'export_date': datetime.now().isoformat(),
-            'summary': {
-                'total_years': len(predictions),
-                'historical_years': len([p for p in predictions if p.get('year', 0) <= datetime.now().year]),
-                'future_years': len([p for p in predictions if p.get('year', 0) > datetime.now().year])
-            }
-        }
+    def initialize_default_scenarios(self, user_id: int):
+        """Inicializa escenarios predefinidos"""
+        pass

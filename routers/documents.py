@@ -127,7 +127,7 @@ async def upload_document(
     # Preparar directorio y nombre de archivo
     save_dir = ALLOWED_MIME_TYPES[file.content_type]
     unique_name = f"{uuid.uuid4()}{file_extension}"
-    file_path = os.path.join(save_dir, unique_name)
+    file_path = os.path.abspath(os.path.join(save_dir, unique_name))
 
     try:
         # Guardar archivo en disco

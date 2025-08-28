@@ -63,21 +63,41 @@ class Program(Base):
     __tablename__ = "programs"
 
     id = Column(Integer, primary_key=True, index=True)
+    code = Column(String, unique=True, nullable=False)
     name = Column(String, nullable=False)
-    level = Column(String, nullable=False)  # tecnólogo, especialización, etc.
+    level = Column(String, nullable=False)
     sector = Column(String, nullable=False)
     core_line = Column(String, nullable=False)
-    quota = Column(Integer)  # cupos o aprendices
-    region = Column(String)  # para R3.4
+
+    # Aquí los campos que usa ProgramCreate
+    capacity = Column(Integer, nullable=False)             # cupos
+    current_students = Column(Integer, default=0)          # estudiantes activos
+    region = Column(String, nullable=True)                 # región opcional
+    description = Column(String, nullable=True)            # descripción opcional
+
+    # Control
+    is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+
 
 class DemandIndicator(Base):
     __tablename__ = "demand_indicators"
 
     id = Column(Integer, primary_key=True)
     sector = Column(String, nullable=False)
-    indicator_value = Column(Float)
-    source_document_id = Column(Integer, ForeignKey("documents.id"), nullable=True)  # relación con biblioteca
+    year = Column(Integer, nullable=False)
+    demand_value = Column(Float)  # Percentage or absolute value
+    source = Column(String)  # Source of the data
+    source_document_id = Column(Integer, ForeignKey("documents.id"), nullable=True)
+    notes = Column(Text)
+    created_by = Column(Integer, ForeignKey("users.id"))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    document = relationship("Document")
+    creator = relationship("User")
 
 class ProjectionSetting(Base):
     __tablename__ = "projection_settings"
@@ -269,19 +289,18 @@ class SystemConfiguration(Base):
     def __repr__(self):
         return f"<SystemConfiguration(key='{self.key}')>"
 
-class PasswordResetToken(Base):
-    __tablename__ = "password_reset_tokens"
+#class PasswordResetToken(Base):
+ #   __tablename__ = "password_reset_tokens"
+  #  id = Column(Integer, primary_key=True, index=True)
+   # user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    #token = Column(String(255), nullable=False, unique=True)
+    #expires_at = Column(DateTime(timezone=True), nullable=False)
+    #used = Column(Boolean, default=False)
+    #created_at = Column(DateTime(timezone=True), server_default=func.now())
     
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    token = Column(String(255), nullable=False, unique=True)
-    expires_at = Column(DateTime(timezone=True), nullable=False)
-    used = Column(Boolean, default=False)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    #user = relationship("User")
     
-    user = relationship("User")
-    
-    def __repr__(self):
+    #def __repr__(self):
         return f"<PasswordResetToken(user_id={self.user_id}, used={self.used})>"
 
 class Permission(Base):
@@ -370,3 +389,30 @@ class ScenarioConfiguration(Base):
     def __repr__(self):
         return f"<ScenarioConfiguration(type='{self.scenario_type}', param='{self.parameter_name}')>"
 
+# ==================== DOFA ====================
+
+class DofaItem(Base):
+    __tablename__ = "dofa_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    category = Column(String, nullable=False)  # D / O / F / A
+    text = Column(Text, nullable=False)
+    source = Column(String, nullable=True)
+    responsible = Column(String, nullable=True)
+    priority = Column(String, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, onupdate=func.now())
+    created_by = Column(Integer, ForeignKey("users.id"))
+    updated_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    is_active = Column(Boolean, default=True)
+
+
+class DofaChangeLog(Base):
+    __tablename__ = "dofa_change_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    dofa_item_id = Column(Integer, ForeignKey("dofa_items.id"))
+    action = Column(String, nullable=False)  # created, updated, deleted
+    changed_at = Column(DateTime, server_default=func.now())
+    changed_by = Column(Integer, ForeignKey("users.id"))
+    details = Column(Text, nullable=True)  # JSON con cambios
