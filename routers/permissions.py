@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from typing import List, Dict, Any
 
-from models import User, Permission, RolePermission
+from models import User, Permission, RolePermission, UserPermission
 from schemas import PermissionResponse, RolePermissionCreate, RolePermissionResponse
 from routers.auth import get_db, require_role, get_current_user
 from routers.audit import AuditLogger, get_client_ip, get_user_agent
@@ -92,22 +92,30 @@ DEFAULT_ROLE_PERMISSIONS = {
 }
 
 def user_has_permission(db: Session, user: User, permission_name: str) -> bool:
-    """
-    Verifica si un usuario tiene un permiso específico
-    """
-    # Buscar el permiso
     permission = db.query(Permission).filter(Permission.name == permission_name).first()
     if not permission:
         return False
-    
-    # Buscar si el rol del usuario tiene este permiso
-    role_permission = db.query(RolePermission).filter(
+
+    # Revisa permisos de rol
+    role_perm = db.query(RolePermission).filter(
         RolePermission.role == user.role,
         RolePermission.permission_id == permission.id,
         RolePermission.granted == True
     ).first()
-    
-    return role_permission is not None
+    if role_perm:
+        return True
+
+    # Revisa permisos individuales
+    user_perm = db.query(UserPermission).filter(
+        UserPermission.user_id == user.id,
+        UserPermission.permission_id == permission.id,
+        UserPermission.granted == True
+    ).first()
+    if user_perm:
+        return True
+
+    return False
+
 
 def require_permission(permission_name: str):
     """

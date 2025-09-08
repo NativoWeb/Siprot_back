@@ -1,14 +1,14 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, JSON, func, ForeignKey
+from sqlalchemy import Column, Integer, String, DateTime, JSON, func, ForeignKey, desc
 from sqlalchemy.orm import Session, relationship
-from database import Base
-from datetime import datetime
+from database import Base, get_db
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from pydantic import BaseModel
 from enum import Enum
 import logging
-from models import AuditLog
+from models import AuditLog, User
 from dependencies import get_current_user
-from fastapi import Request
+from fastapi import Request, APIRouter, Depends, HTTPException, Query
 
 # ==================== ENUM DE ACCIONES DE AUDITORÍA ====================
 
@@ -184,12 +184,64 @@ class AuditLogger:
             new_values=new_values
         )
 
+    # ==================== CONSULTAS ====================
+
+    @staticmethod
+    def get_audit_logs(db: Session, filters: AuditLogFilter) -> List[AuditLog]:
+        query = db.query(AuditLog)
+
+        if filters.action:
+            query = query.filter(AuditLog.action == filters.action)
+        if filters.user_email:
+            query = query.filter(AuditLog.user_email.ilike(f"%{filters.user_email}%"))
+        if filters.target_type:
+            query = query.filter(AuditLog.target_type == filters.target_type)
+        if filters.resource_type:
+            query = query.filter(AuditLog.resource_type == filters.resource_type)
+        if filters.date_from:
+            query = query.filter(AuditLog.timestamp >= filters.date_from)
+        if filters.date_to:
+            query = query.filter(AuditLog.timestamp <= filters.date_to)
+
+        return (
+            query.order_by(desc(AuditLog.timestamp))
+            .offset(filters.offset)
+            .limit(filters.limit)
+            .all()
+        )
+
+    @staticmethod
+    def get_user_activity(db: Session, user_id: int, limit: int = 50) -> List[AuditLog]:
+        return (
+            db.query(AuditLog)
+            .filter(AuditLog.user_id == user_id)
+            .order_by(desc(AuditLog.timestamp))
+            .limit(limit)
+            .all()
+        )
+
+    @staticmethod
+    def get_critical_actions(db: Session, hours: int = 24) -> List[AuditLog]:
+        critical_actions = [
+            AuditAction.USER_DELETED.value,
+            AuditAction.USER_ROLE_CHANGED.value,
+            AuditAction.SYSTEM_CONFIG_UPDATED.value,
+            AuditAction.PROGRAM_DELETED.value,
+            AuditAction.DOCUMENT_DELETED.value,
+        ]
+
+        time_limit = datetime.utcnow() - timedelta(hours=hours)
+
+        return (
+            db.query(AuditLog)
+            .filter(AuditLog.action.in_(critical_actions))
+            .filter(AuditLog.timestamp >= time_limit)
+            .order_by(desc(AuditLog.timestamp))
+            .all()
+        )
+
 
 # ==================== ENDPOINTS DE AUDITORÍA ====================
-
-from fastapi import APIRouter, Depends, HTTPException, Query
-from database import get_db
-from models import User
 
 router = APIRouter(prefix="/audit", tags=["audit"])
 
@@ -272,6 +324,7 @@ def setup_audit_logging():
             logging.StreamHandler()
         ]
     )
+
 
 # ==================== FUNCIONES AUXILIARES ====================
 
