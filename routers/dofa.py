@@ -80,7 +80,7 @@ def log_dofa_change(
 def check_dofa_permissions(user: User, action: str = "read") -> bool:
     """Verifica permisos para operaciones DOFA"""
     if action == "read":
-        return user.role in ["planeacion", "directivos", "superadmin"]
+        return user.role in ["planeacion", "administrativo", "superadmin"]
     elif action in ["create", "update", "delete"]:
         return user.role in ["planeacion", "superadmin"]
     return False
@@ -379,7 +379,7 @@ async def export_dofa(
     export_request: DofaExportRequest,
     request: Request,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["planeacion", "directivos", "superadmin"]))
+    current_user: User = Depends(require_role(["planeacion", "administrativo", "superadmin"]))
 ):
     """
     R5.7: Exportar análisis DOFA a PDF o DOCX

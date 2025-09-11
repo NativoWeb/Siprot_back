@@ -1,11 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from sqlalchemy.orm import Session
 from typing import List
-from models import User
+from models import User, Permission, UserPermission
 from schemas import UserCreate, UserResponse, UserUpdate
 from routers.auth import get_password_hash, require_role, validate_role
 from dependencies import get_current_user, get_db
-from routers.audit import AuditLogger, AuditAction  # ✅ Importar para auditoría
+from routers.audit import AuditLogger, AuditAction
+from routers.permissions import DEFAULT_ROLE_PERMISSIONS  # ✅ Importar para auditoría
 
 router = APIRouter(prefix="/users", tags=["Usuarios"])
 
@@ -16,6 +17,7 @@ def create_user(
     current_user: User = Depends(require_role(["superadmin"])),
     request: Request = None
 ):
+    # 🔹 Validar rol
     validate_role(user_data.role)
 
     if db.query(User).filter(User.email == user_data.email).first():
@@ -27,15 +29,30 @@ def create_user(
     db.commit()
     db.refresh(new_user)
 
-    # 🔹 Auditoría (movemos target_* a details)
+    # 🔹 Asignar permisos por defecto según el rol
+    role_permissions = DEFAULT_ROLE_PERMISSIONS.get(user_data.role, [])
+    for perm_name in role_permissions:
+        permission = db.query(Permission).filter(Permission.name == perm_name).first()
+        if permission:
+            user_perm = UserPermission(
+                user_id=new_user.id,
+                permission_id=permission.id,
+                granted=True,
+                created_by=current_user.id
+            )
+            db.add(user_perm)
+
+    db.commit()
+
+    # 🔹 Auditoría
     AuditLogger.log_user_action(
         db=db,
         action=AuditAction.USER_CREATED,
         user_id=current_user.id,
         user_email=current_user.email,
-        target_type="user",        # 👈 aquí sí se manda
-        target_id=new_user.id,     # 👈 aquí también
-        details={"created_user_email": new_user.email},
+        target_type="user",
+        target_id=new_user.id,
+        details={"created_user_email": new_user.email, "role": new_user.role},
         request=request
     )
 

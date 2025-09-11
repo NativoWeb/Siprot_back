@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 @router.get("/csv-files", response_model=List[Dict])
 def get_csv_files(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["planeacion", "directivo", "instructor"]))
+    current_user: User = Depends(require_role(["planeacion", "administrativo", "instructor"]))
 ):
     """Obtiene la lista de archivos CSV disponibles para análisis de escenarios"""
     try:
@@ -49,7 +49,7 @@ def generate_scenarios_from_csv(
     scenario_types: List[str] = ["tendencial", "optimista", "pesimista"],
     years_ahead: int = 10,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["planeacion", "directivo"]))
+    current_user: User = Depends(require_role(["planeacion", "administrativo"]))
 ):
     """Genera escenarios prospectivos basados en un archivo CSV específico"""
     try:
@@ -176,7 +176,7 @@ def generate_scenarios_from_csv(
 def compare_scenarios(
     scenario_ids: List[int],
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["planeacion", "directivo", "instructor"]))
+    current_user: User = Depends(require_role(["planeacion", "administrativo", "instructor"]))
 ):
     """Compara múltiples escenarios lado a lado"""
     try:
