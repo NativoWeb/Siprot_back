@@ -13,12 +13,12 @@ router = APIRouter(prefix="/programs", tags=["Oferta Educativa"])
 
 # 📄 Obtener todos los programas activos
 @router.get("/", response_model=List[ProgramResponse])
-def list_programs(db: Session = Depends(get_db), current_user: User = Depends(require_role(["planeacion", "directivos"]))):
+def list_programs(db: Session = Depends(get_db), current_user: User = Depends(require_role(["planeacion", "administrativo", "superadmin"]))):
     return db.query(Program).filter(Program.is_active == True).order_by(Program.created_at.desc()).all()
 
 # ➕ Crear un nuevo programa
 @router.post("/", response_model=ProgramResponse)
-def create_program(program_data: ProgramCreate, db: Session = Depends(get_db), current_user: User = Depends(require_role(["planeacion"]))):
+def create_program(program_data: ProgramCreate, db: Session = Depends(get_db), current_user: User = Depends(require_role(["planeacion", "superadmin"]))):
     # Check if program code already exists
     existing_program = db.query(Program).filter(Program.code == program_data.code).first()
     if existing_program:
@@ -35,7 +35,7 @@ def bulk_upload_programs(
     file: UploadFile = File(...),
     
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["planeacion"]))
+    current_user: User = Depends(require_role(["planeacion", "superadmin"]))
 ):
     """
 
@@ -189,6 +189,7 @@ def update_program(program_id: int, program_data: ProgramUpdate, db: Session = D
 
     for field, value in program_data.dict(exclude_unset=True).items():
         setattr(program, field, value)
+        
     
     program.updated_at = datetime.utcnow()
     db.commit()

@@ -22,7 +22,7 @@ class DataService:
         """Obtiene lista de indicadores con datos hardcodeados"""
         indicadores_data = [
             {
-                "id": "empleabilidad_egresados",
+                "id": "empleabilidad_egresados", 
                 "nombre": "Empleabilidad de Egresados",
                 "valor_actual": 82.5,
                 "meta": 85.0,

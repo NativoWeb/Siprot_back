@@ -154,7 +154,11 @@ class ReporteResponse(BaseModel):
     estado: EstadoReporte
     archivo_path: Optional[str] = None
     tamaño_archivo: Optional[int] = None
-    
+    titulo_personalizado: Optional[str] = None  # ← para <h3>{{ reporte.titulo_personalizado }}
+    archivo_nombre: Optional[str] = None        # ← para el PDF
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
     class Config:
         from_attributes = True
 

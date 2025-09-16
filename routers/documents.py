@@ -13,6 +13,7 @@ import unicodedata
 import urllib.parse
 from fastapi.responses import FileResponse
 from datetime import datetime
+from dependencies import get_current_user
 
 router = APIRouter(prefix="/documents", tags=["Documentos"])
 
@@ -174,7 +175,7 @@ def get_documents(
     document_type: Optional[str] = Query(None),
     year: Optional[int] = Query(None),
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["administrativo", "planeacion", "superadmin"]))
+    current_user: User = Depends(require_role(["administrativo", "planeacion", "superadmin", "instructor"]))
 ):
     query = db.query(Document)
     
@@ -200,7 +201,7 @@ def get_documents(
 @router.get("/filter-options")
 def get_filter_options(
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["administrativo", "planeacion", "superadmin"]))
+    current_user: User = Depends(require_role(["administrativo", "planeacion", "superadmin", "instructor"]))
 ):
     sectors = db.query(Document.sector).distinct().all()
     core_lines = db.query(Document.core_line).distinct().all()
@@ -219,7 +220,7 @@ def get_filter_options(
 def download_document(
     document_id: int,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["administrativo", "planeacion", "superadmin"]))
+    current_user: User = Depends(require_role(["administrativo", "planeacion", "superadmin", "instructor"]))
 ):
     document = db.query(Document).filter(Document.id == document_id).first()
     if not document:
