@@ -40,6 +40,8 @@ pandas
 joblib
 scikit-learn
 tensorflow
+openpyxl>=3.1.0
+
 
 # PDF and document processing dependencies
 reportlab>=4.0.7

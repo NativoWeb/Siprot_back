@@ -304,4 +304,3 @@ async def ver_reporte(
         )
     else:
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
-
