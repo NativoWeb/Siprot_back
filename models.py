@@ -129,7 +129,7 @@ class ProjectionSetting(Base):
 class Indicador(Base):
     __tablename__ = "indicadores"
 
-    id = Column(String(100), primary_key=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     nombre = Column(String(200), nullable=False)
     valor_actual = Column(Float, nullable=False)
     meta = Column(Float, nullable=False)

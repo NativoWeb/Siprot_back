@@ -163,8 +163,7 @@ class ReporteResponse(BaseModel):
         from_attributes = True
 
 # Schemas para Indicadores
-class IndicadorBase(BaseModel):
-    id: str
+class IndicadorCreate(BaseModel):
     nombre: str
     valor_actual: float
     meta: float
@@ -173,13 +172,37 @@ class IndicadorBase(BaseModel):
     descripcion: Optional[str] = None
     categoria: Optional[str] = None
 
-class IndicadorResponse(IndicadorBase):
+
+class IndicadorResponse(IndicadorCreate):
+    id: int
     fecha_actualizacion: datetime
     cumplimiento: float
     estado_semaforo: str
-    
+
     class Config:
         from_attributes = True
+
+
+class ResumenIndicadores(BaseModel):
+    total_indicadores: int
+    verde: int
+    amarillo: int
+    rojo: int
+    cumplimiento_general: float
+
+    class Config:
+        from_attributes = True
+
+class IndicadorUpdate(BaseModel):
+    id: int
+    nombre: str
+    descripcion: Optional[str] = None
+    valor_actual: float
+    meta: float
+    unidad: str
+    categoria: Optional[str] = None
+    tendencia: Optional[str] = None
+
 
 class TipoReporteInfo(BaseModel):
     tipo: TipoReporte

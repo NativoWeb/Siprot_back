@@ -9,7 +9,7 @@ from database import engine, SessionLocal
 from models import Base
 
 # Imports de todos los routers principales
-from routers import auth, users, documents, programs, reports, scenarios, permissions, dofa
+from routers import auth, users, documents, programs, reports, scenarios, permissions, dofa, indicators
 # Auditoría
 try:
     from routers.audit import router as audit_router
@@ -89,6 +89,7 @@ app.include_router(reports.router)
 app.include_router(scenarios.router)
 app.include_router(permissions.router)
 app.include_router(dofa.router)
+app.include_router(indicators.router)
 
 if AUDIT_AVAILABLE:
     app.include_router(audit_router)
