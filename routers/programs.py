@@ -69,7 +69,7 @@ def bulk_upload_programs(
             df = pd.read_excel(io.BytesIO(contents))
         
         # Validar columnas requeridas
-        required_columns = ['code', 'name', 'sector', 'level', 'core_line']
+        required_columns = ['code', 'name', 'sector', 'level', 'core_line', 'program_date']
         optional_columns = ['capacity', 'region', 'description', 'current_students']
         all_expected_columns = required_columns + optional_columns
         

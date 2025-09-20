@@ -9,7 +9,7 @@ from database import engine, SessionLocal
 from models import Base
 
 # Imports de todos los routers principales
-from routers import auth, users, documents, programs, reports, scenarios, permissions, dofa, indicators
+from routers import auth, users, documents, programs, reports, scenarios, permissions, dofa, indicators, catalogs
 # Auditoría
 try:
     from routers.audit import router as audit_router
@@ -90,6 +90,7 @@ app.include_router(scenarios.router)
 app.include_router(permissions.router)
 app.include_router(dofa.router)
 app.include_router(indicators.router)
+app.include_router(catalogs.router)
 
 if AUDIT_AVAILABLE:
     app.include_router(audit_router)
@@ -114,10 +115,6 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy"}
-
-@app.options("/{full_path:path}")
-async def options_handler(full_path: str):
-    return {"message": "OK"}
 
 @app.on_event("startup")
 def startup_event():

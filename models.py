@@ -65,6 +65,9 @@ class Document(Base):
     additional_notes = Column(String(500), nullable=True)
     file_path = Column(String(500), nullable=False)
 
+    # NUEVO: tamaño del archivo en bytes
+    file_size = Column(Integer, nullable=True)
+
     uploaded_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -91,10 +94,18 @@ class Program(Base):
     region = Column(String, nullable=True)
     description = Column(String, nullable=True)
 
+    # Fecha real de creación del programa (manual, no ligada al registro en BD)
+    program_date = Column(DateTime, nullable=False)
+
+    # Fechas de auditoría en BD
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    def __repr__(self):
+        return f"<Program(code='{self.code}', name='{self.name}', program_date='{self.program_date}')>"
+
 
 
 # ==================== INDICADORES Y PROYECCIONES ====================

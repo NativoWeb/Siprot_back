@@ -117,12 +117,12 @@ async def upload_document(
 
     original_filename = file.filename or "documento_sin_nombre"
     file_extension = os.path.splitext(original_filename)[1].lower()
-    
-    # Validar extensión del archivo
+
+    # Validar extensión
     if file_extension not in ALLOWED_EXTENSIONS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Extensión {file_extension} no permitida. Use .pdf, .docx, .xlsx o .csv"
+            detail=f"Extensión {file_extension} no permitida."
         )
 
     # Preparar directorio y nombre de archivo
@@ -131,9 +131,13 @@ async def upload_document(
     file_path = os.path.abspath(os.path.join(save_dir, unique_name))
 
     try:
-        # Guardar archivo en disco
+        # Guardar archivo
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
+
+        # Obtener tamaño del archivo
+        file_size = os.path.getsize(file_path)
+
     except Exception as e:
         logger.error(f"Error al guardar archivo: {str(e)}")
         raise HTTPException(
@@ -141,10 +145,9 @@ async def upload_document(
             detail="Error al guardar el archivo en el servidor"
         )
 
-    # Determinar tipo MIME real
     mime_type = get_mime_type_from_extension(file_extension)
 
-    # Crear registro en la base de datos
+    # Crear registro en BD
     db_document = Document(
         title=title,
         original_filename=original_filename,
@@ -156,6 +159,7 @@ async def upload_document(
         document_type=document_type,
         additional_notes=additional_notes,
         file_path=file_path,
+        file_size=file_size,  # ✅ guardar tamaño
         uploaded_by_user_id=current_user.id
     )
 
@@ -165,6 +169,7 @@ async def upload_document(
 
     logger.info(f"Documento subido por {current_user.email}: ID {db_document.id}")
     return DocumentResponse.from_orm(db_document)
+
 
 # Endpoint para listar documentos
 @router.get("/", response_model=List[DocumentResponse])
@@ -310,7 +315,7 @@ async def replace_file(
             detail="Documento no encontrado"
         )
 
-    # Validar tipo de archivo
+    # Validar tipo y extensión
     if file.content_type not in ALLOWED_MIME_TYPES:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -345,6 +350,10 @@ async def replace_file(
     try:
         with open(new_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
+
+        # Obtener tamaño del archivo
+        file_size = os.path.getsize(new_path)
+
     except Exception as e:
         logger.error(f"Error al guardar nuevo archivo: {str(e)}")
         raise HTTPException(
@@ -357,6 +366,7 @@ async def replace_file(
     document.file_extension = file_extension
     document.mime_type = get_mime_type_from_extension(file_extension)
     document.file_path = new_path
+    document.file_size = file_size  # ✅ actualizar tamaño
 
     db.commit()
     db.refresh(document)
