@@ -1,6 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from typing import List
+import csv
+import io
 
 from models import User, Sector, CoreLine, DocumentType
 from schemas import (
@@ -9,7 +12,7 @@ from schemas import (
     DocumentTypeCreate, DocumentTypeUpdate, DocumentTypeResponse
 )
 from routers.auth import get_db, require_role
-from routers.audit import AuditLogger, get_client_ip, get_user_agent
+from routers.audit import AuditLogger, AuditAction, get_client_ip, get_user_agent
 
 router = APIRouter(prefix="/catalogs", tags=["Catálogos Maestros"])
 
@@ -36,15 +39,16 @@ def create_sector(
     db.commit()
     db.refresh(new_sector)
     
-    # Log de auditoría
-    audit = AuditLogger(db)
-    audit.log_catalog_change(
-        action="CREATE",
-        catalog_type="SECTOR",
-        catalog_id=new_sector.id,
-        new_data=sector_data.dict(),
+    AuditLogger.log_user_action(
+        db=db,
+        action=AuditAction.CATALOG_SECTOR_CREATED,
         user_id=current_user.id,
-        ip=get_client_ip(request)
+        user_email=current_user.email,
+        target_type="SECTOR",
+        target_id=str(new_sector.id),
+        details={"sector_name": new_sector.name},
+        request=request,
+        new_values=sector_data.dict()
     )
     
     return SectorResponse.from_orm(new_sector)
@@ -91,16 +95,17 @@ def update_sector(
     db.commit()
     db.refresh(sector)
     
-    # Log de auditoría
-    audit = AuditLogger(db)
-    audit.log_catalog_change(
-        action="UPDATE",
-        catalog_type="SECTOR",
-        catalog_id=sector.id,
-        old_data=old_values,
-        new_data=update_data,
+    AuditLogger.log_user_action(
+        db=db,
+        action=AuditAction.CATALOG_SECTOR_UPDATED,
         user_id=current_user.id,
-        ip=get_client_ip(request)
+        user_email=current_user.email,
+        target_type="SECTOR",
+        target_id=str(sector.id),
+        details={"sector_name": sector.name},
+        request=request,
+        old_values=old_values,
+        new_values=update_data
     )
     
     return SectorResponse.from_orm(sector)
@@ -124,21 +129,32 @@ def delete_sector(
     sector.is_active = False
     db.commit()
     
-    # Log de auditoría
-    audit = AuditLogger(db)
-    audit.log_catalog_change(
-        action="DELETE",
-        catalog_type="SECTOR",
-        catalog_id=sector.id,
-        old_data={"is_active": True},
-        new_data={"is_active": False},
+    AuditLogger.log_user_action(
+        db=db,
+        action=AuditAction.CATALOG_SECTOR_DELETED,
         user_id=current_user.id,
-        ip=get_client_ip(request)
+        user_email=current_user.email,
+        target_type="SECTOR",
+        target_id=str(sector.id),
+        details={"sector_name": sector.name},
+        request=request,
+        old_values={"is_active": True},
+        new_values={"is_active": False}
     )
     
     return {"message": f"Sector '{sector.name}' desactivado exitosamente"}
 
 # ==================== LÍNEAS MEDULARES ====================
+
+@router.get("/medular-lines", response_model=List[CoreLineResponse])
+def list_medular_lines(
+    include_inactive: bool = False,
+    sector_id: int = None,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["superadmin", "administrativo", "planeacion"]))
+):
+    """Listar todas las líneas medulares (alias para core-lines)"""
+    return list_core_lines(include_inactive, sector_id, db, current_user)
 
 @router.post("/core-lines", response_model=CoreLineResponse)
 def create_core_line(
@@ -159,23 +175,28 @@ def create_core_line(
             raise HTTPException(status_code=400, detail="El sector especificado no existe")
     
     # Crear línea medular
+    core_line_dict = core_line_data.dict()
+    # Remove created_by if it exists in the schema to avoid conflict
+    core_line_dict.pop('created_by', None)
+    
     new_core_line = CoreLine(
-        **core_line_data.dict(),
+        **core_line_dict,
         created_by=current_user.id
     )
     db.add(new_core_line)
     db.commit()
     db.refresh(new_core_line)
     
-    # Log de auditoría
-    audit = AuditLogger(db)
-    audit.log_catalog_change(
-        action="CREATE",
-        catalog_type="CORE_LINE",
-        catalog_id=new_core_line.id,
-        new_data=core_line_data.dict(),
+    AuditLogger.log_user_action(
+        db=db,
+        action=AuditAction.CATALOG_CORE_LINE_CREATED,
         user_id=current_user.id,
-        ip=get_client_ip(request)
+        user_email=current_user.email,
+        target_type="CORE_LINE",
+        target_id=str(new_core_line.id),
+        details={"core_line_name": new_core_line.name},
+        request=request,
+        new_values=core_line_data.dict()
     )
     
     return CoreLineResponse.from_orm(new_core_line)
@@ -234,16 +255,17 @@ def update_core_line(
     db.commit()
     db.refresh(core_line)
     
-    # Log de auditoría
-    audit = AuditLogger(db)
-    audit.log_catalog_change(
-        action="UPDATE",
-        catalog_type="CORE_LINE",
-        catalog_id=core_line.id,
-        old_data=old_values,
-        new_data=update_data,
+    AuditLogger.log_user_action(
+        db=db,
+        action=AuditAction.CATALOG_CORE_LINE_UPDATED,
         user_id=current_user.id,
-        ip=get_client_ip(request)
+        user_email=current_user.email,
+        target_type="CORE_LINE",
+        target_id=str(core_line.id),
+        details={"core_line_name": core_line.name},
+        request=request,
+        old_values=old_values,
+        new_values=update_data
     )
     
     return CoreLineResponse.from_orm(core_line)
@@ -267,16 +289,17 @@ def delete_core_line(
     core_line.is_active = False
     db.commit()
     
-    # Log de auditoría
-    audit = AuditLogger(db)
-    audit.log_catalog_change(
-        action="DELETE",
-        catalog_type="CORE_LINE",
-        catalog_id=core_line.id,
-        old_data={"is_active": True},
-        new_data={"is_active": False},
+    AuditLogger.log_user_action(
+        db=db,
+        action=AuditAction.CATALOG_CORE_LINE_DELETED,
         user_id=current_user.id,
-        ip=get_client_ip(request)
+        user_email=current_user.email,
+        target_type="CORE_LINE",
+        target_id=str(core_line.id),
+        details={"core_line_name": core_line.name},
+        request=request,
+        old_values={"is_active": True},
+        new_values={"is_active": False}
     )
     
     return {"message": f"Línea medular '{core_line.name}' desactivada exitosamente"}
@@ -295,24 +318,29 @@ def create_document_type(
     if db.query(DocumentType).filter(DocumentType.name == doc_type_data.name).first():
         raise HTTPException(status_code=400, detail="Ya existe un tipo de documento con ese nombre")
     
+    doc_type_dict = doc_type_data.dict()
+    # Remove created_by if it exists in the schema to avoid conflict
+    doc_type_dict.pop('created_by', None)
+    
     # Crear tipo de documento
     new_doc_type = DocumentType(
-        **doc_type_data.dict(),
+        **doc_type_dict,
         created_by=current_user.id
     )
     db.add(new_doc_type)
     db.commit()
     db.refresh(new_doc_type)
     
-    # Log de auditoría
-    audit = AuditLogger(db)
-    audit.log_catalog_change(
-        action="CREATE",
-        catalog_type="DOCUMENT_TYPE",
-        catalog_id=new_doc_type.id,
-        new_data=doc_type_data.dict(),
+    AuditLogger.log_user_action(
+        db=db,
+        action=AuditAction.RESOURCE_CREATE,
         user_id=current_user.id,
-        ip=get_client_ip(request)
+        user_email=current_user.email,
+        target_type="DOCUMENT_TYPE",
+        target_id=str(new_doc_type.id),
+        details={"document_type_name": new_doc_type.name},
+        request=request,
+        new_values=doc_type_data.dict()
     )
     
     return DocumentTypeResponse.from_orm(new_doc_type)
@@ -360,16 +388,17 @@ def update_document_type(
     db.commit()
     db.refresh(doc_type)
     
-    # Log de auditoría
-    audit = AuditLogger(db)
-    audit.log_catalog_change(
-        action="UPDATE",
-        catalog_type="DOCUMENT_TYPE",
-        catalog_id=doc_type.id,
-        old_data=old_values,
-        new_data=update_data,
+    AuditLogger.log_user_action(
+        db=db,
+        action=AuditAction.RESOURCE_UPDATE,
         user_id=current_user.id,
-        ip=get_client_ip(request)
+        user_email=current_user.email,
+        target_type="DOCUMENT_TYPE",
+        target_id=str(doc_type.id),
+        details={"document_type_name": doc_type.name},
+        request=request,
+        old_values=old_values,
+        new_values=update_data
     )
     
     return DocumentTypeResponse.from_orm(doc_type)
@@ -393,19 +422,56 @@ def delete_document_type(
     doc_type.is_active = False
     db.commit()
     
-    # Log de auditoría
-    audit = AuditLogger(db)
-    audit.log_catalog_change(
-        action="DELETE",
-        catalog_type="DOCUMENT_TYPE",
-        catalog_id=doc_type.id,
-        old_data={"is_active": True},
-        new_data={"is_active": False},
+    AuditLogger.log_user_action(
+        db=db,
+        action=AuditAction.RESOURCE_DELETE,
         user_id=current_user.id,
-        ip=get_client_ip(request)
+        user_email=current_user.email,
+        target_type="DOCUMENT_TYPE",
+        target_id=str(doc_type.id),
+        details={"document_type_name": doc_type.name},
+        request=request,
+        old_values={"is_active": True},
+        new_values={"is_active": False}
     )
     
     return {"message": f"Tipo de documento '{doc_type.name}' desactivado exitosamente"}
+
+@router.get("/document-types/export")
+def export_document_types(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["superadmin", "administrativo", "planeacion"]))
+):
+    """Exportar tipos de documento a CSV"""
+    # Obtener todos los tipos de documento activos
+    doc_types = db.query(DocumentType).filter(DocumentType.is_active == True).order_by(DocumentType.name).all()
+    
+    # Crear CSV en memoria
+    output = io.StringIO()
+    writer = csv.writer(output)
+    
+    # Escribir encabezados
+    writer.writerow(['ID', 'Nombre', 'Descripción', 'Extensiones Permitidas', 'Fecha Creación', 'Creado Por'])
+    
+    # Escribir datos
+    for doc_type in doc_types:
+        writer.writerow([
+            doc_type.id,
+            doc_type.name,
+            doc_type.description or '',
+            ', '.join(doc_type.allowed_extensions) if doc_type.allowed_extensions else '',
+            doc_type.created_at.strftime('%Y-%m-%d %H:%M:%S') if doc_type.created_at else '',
+            doc_type.created_by or ''
+        ])
+    
+    # Preparar respuesta
+    output.seek(0)
+    
+    return StreamingResponse(
+        io.BytesIO(output.getvalue().encode('utf-8')),
+        media_type='text/csv',
+        headers={"Content-Disposition": "attachment; filename=tipos_documentos.csv"}
+    )
 
 # ==================== ENDPOINTS COMBINADOS ====================
 

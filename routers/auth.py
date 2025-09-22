@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Configuración de seguridad
 SECRET_KEY = "tu-clave-secreta-muy-segura-aqui-cambiar-en-produccion"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30  # Tiempo de expiración del token en minutos
+ACCESS_TOKEN_EXPIRE_MINUTES = 1  # Tiempo de expiración del token en minutos
 
 
 # Roles válidos
@@ -44,6 +44,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     else:
         expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
+    logger.info(f"Token creado. Expira en: {expire} (UTC)")
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt
 
@@ -128,14 +129,13 @@ def login(login_data: LoginRequest, db: Session = Depends(get_db)):
         resource_id=str(user.id)
     )
     
-    # Token expira en 1 minuto
     access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": user.email, "role": user.role},
         expires_delta=access_token_expires
     )
     
-    logger.info(f"Login exitoso para '{user.email}'. Token generado (1 minuto).")
+    logger.info(f"Login exitoso para '{user.email}'. Token generado ({ACCESS_TOKEN_EXPIRE_MINUTES} minutos).")
     
     
     return LoginResponse(

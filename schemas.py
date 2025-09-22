@@ -400,7 +400,6 @@ class SectorCreate(BaseModel):
     name: str
     description: Optional[str] = None
     is_active: Optional[bool] = True
-    created_by: int
 
 class SectorUpdate(BaseModel):
     name: Optional[str] = None
