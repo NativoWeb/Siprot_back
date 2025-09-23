@@ -90,7 +90,7 @@ class ProgramCreate(BaseModel):
     current_students: Optional[int] = 0
     region: Optional[str] = None
     description: Optional[str] = None
-    program_date: datetime  # 
+    program_date: Optional[datetime]  # 
 
 class ProgramUpdate(BaseModel):
     code: Optional[str] = None
@@ -116,7 +116,7 @@ class ProgramResponse(BaseModel):
     current_students: Optional[int]
     region: Optional[str]
     description: Optional[str]
-    program_date: datetime   
+    program_date: Optional[datetime]  # <-- Made program_date optional to handle None values from database
     created_at: datetime
     updated_at: datetime
     created_by: int

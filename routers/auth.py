@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 # Configuración de seguridad
 SECRET_KEY = "tu-clave-secreta-muy-segura-aqui-cambiar-en-produccion"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 1  # Tiempo de expiración del token en minutos
+ACCESS_TOKEN_EXPIRE_MINUTES = 15  # Tiempo de expiración del token en minutos
 
 
 # Roles válidos
