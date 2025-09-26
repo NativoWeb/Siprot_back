@@ -8,7 +8,8 @@ from datetime import datetime
 
 from models import Program, User, DemandIndicator
 from schemas import ProgramCreate, ProgramUpdate, ProgramResponse
-from routers.auth import get_db, require_role, get_current_user
+from routers.auth import get_db, require_role
+from dependencies import get_current_user
 
 router = APIRouter(prefix="/programs", tags=["Oferta Educativa"])
 
@@ -76,7 +77,6 @@ def bulk_upload_programs(
         
         required_columns = ["code", "name", "sector", "level", "core_line", "program_date"]
         optional_columns = ["capacity", "region", "description", "current_students"]
-        all_expected_columns = required_columns + optional_columns
         
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
@@ -93,16 +93,19 @@ def bulk_upload_programs(
         
         for index, row in df.iterrows():
             try:
+                # Validar campos requeridos
                 for col in required_columns:
                     if pd.isna(row[col]) or str(row[col]).strip() == "":
                         errors.append(f"Fila {index + 2}: Campo '{col}' es requerido")
                         continue
                 
+                # Validar duplicados por código
                 existing_program = db.query(Program).filter(Program.code == str(row["code"]).strip()).first()
                 if existing_program:
                     errors.append(f"Fila {index + 2}: El código '{row['code']}' ya existe")
                     continue
                 
+                # Crear diccionario base
                 program_data = {
                     "code": str(row["code"]).strip(),
                     "name": str(row["name"]).strip(),
@@ -111,7 +114,23 @@ def bulk_upload_programs(
                     "core_line": str(row["core_line"]).strip(),
                     "created_by": current_user.id,
                 }
+
+                # Procesar fecha de creación (program_date)
+                if not pd.isna(row["program_date"]):
+                    try:
+                        program_data["program_date"] = pd.to_datetime(
+                            row["program_date"], errors="raise"
+                        ).to_pydatetime()
+                    except Exception:
+                        errors.append(
+                            f"Fila {index + 2}: 'program_date' tiene un formato inválido. Usa YYYY-MM-DD"
+                        )
+                        continue
+                else:
+                    errors.append(f"Fila {index + 2}: 'program_date' es requerido")
+                    continue
                 
+                # Campos opcionales
                 if "capacity" in df.columns and not pd.isna(row["capacity"]):
                     try:
                         program_data["capacity"] = int(row["capacity"])
@@ -132,6 +151,7 @@ def bulk_upload_programs(
                 if "description" in df.columns and not pd.isna(row["description"]):
                     program_data["description"] = str(row["description"]).strip()
                 
+                # Guardar programa
                 program = Program(**program_data)
                 db.add(program)
                 created_programs.append(program_data["code"])
@@ -214,7 +234,7 @@ def delete_program(
 @router.get("/analysis/matrix")
 def analyze_matrix(
     db: Session = Depends(get_db),
-    current_user=Depends(require_role(["planeacion", "directivos", "superadmin"]))
+    current_user=Depends(require_role(["planeacion", "administrativo", "superadmin"]))
 ) -> Dict[str, Dict[str, int]]:
     """
     Devuelve una matriz sector vs línea medular con conteo de programas (R3.2).
@@ -243,7 +263,7 @@ def analyze_matrix(
 def analyze_demand_comparison(
     year: int,
     db: Session = Depends(get_db),
-    current_user=Depends(require_role(["planeacion", "directivos", "superadmin"]))
+    current_user=Depends(require_role(["planeacion", "administrativo", "superadmin"]))
 ):
     """
     Compara oferta educativa con indicadores de demanda por sector (R3.3).
@@ -296,10 +316,12 @@ def analyze_demand_comparison(
 @router.get("/analysis/filtered", response_model=List[ProgramResponse])
 def analyze_filtered(
     sector: Optional[str] = None,
+
+    
     level: Optional[str] = None,
     region: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user=Depends(require_role(["planeacion", "directivos", "superadmin"]))
+    current_user=Depends(require_role(["planeacion", "administrativo", "superadmin"]))
 ):
     """
     Devuelve análisis filtrado de oferta educativa (R3.4).

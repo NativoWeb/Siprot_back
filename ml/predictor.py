@@ -12,9 +12,12 @@ def make_positive(array: np.ndarray) -> np.ndarray:
     return np.abs(array)
 
 
-def predict_future(df: pd.DataFrame, scalers: dict = scalers):
+def predict_future(df: pd.DataFrame, scalers_dict: dict = None):
+    if scalers_dict is None:
+        scalers_dict = scalers
+    
     # Escalar datos columna por columna
-    scaled_df = scale_dataframe_safe(df, scalers)
+    scaled_df = scale_dataframe_safe(df, scalers_dict)
 
     # Preparar última ventana
     last_sequence = scaled_df.iloc[-WINDOW_SIZE:].values
@@ -27,7 +30,7 @@ def predict_future(df: pd.DataFrame, scalers: dict = scalers):
     # 🔹 Invertir escalado por columna
     predicted = np.zeros_like(predicted_scaled)
     for j, col in enumerate(df.columns):
-        scaler = scalers[col]
+        scaler = scalers_dict[col]
         predicted[:, j] = scaler.inverse_transform(predicted_scaled[:, j].reshape(-1, 1)).ravel()
 
     # Convertir a positivos

@@ -1,50 +1,58 @@
-annotated-types==0.6.0
-anyio==4.3.0
-bcrypt==4.0.0
-certifi==2024.2.2
-click==8.1.7
-dnspython==2.6.1
-ecdsa==0.19.0
-email-validator==2.1.1
+# --- Core FastAPI ---
 fastapi==0.111.0
 fastapi-cli==0.0.3
-httptools==0.6.1
-httpx==0.27.0
-Jinja2==3.1.4
-markdown-it-py==3.0.0
-MarkupSafe==2.1.5
-mdurl==0.1.2
-orjson==3.10.3
-passlib==1.7.4
-pyasn1==0.6.0
-pydantic==2.7.1
-Pygments==2.18.0
-python-dotenv==1.0.1
-python-jose==3.3.0
-python-multipart==0.0.9
-PyYAML==6.0.1
-rich==13.7.1
-rsa==4.9
-shellingham==1.5.4
-SQLAlchemy==2.0.30
 starlette==0.37.2
-typer==0.12.3
-ujson==5.10.0
 uvicorn==0.29.0
 watchfiles==0.21.0
+anyio==4.3.0
+httptools==0.6.1
 websockets==12.0
+click==8.1.7
+typer==0.12.3
+
+# --- Auth & Security ---
+bcrypt==4.0.0
+ecdsa==0.19.0
+rsa==4.9
+python-jose==3.3.0
+passlib==1.7.4
+email-validator==2.1.1
+pyasn1==0.6.0
+
+# --- Database ---
+SQLAlchemy==2.0.30
 psycopg2-binary
-python-dotenv
+python-multipart==0.0.9
+
+# --- Data Science & ML ---
 numpy
 pandas
 joblib
 scikit-learn
 tensorflow
-openpyxl>=3.1.0
 chardet>=5.0.0
 
+# --- Time Series Forecasting (Darts) ---
+u8darts>=0.30.0
+statsmodels
 
+# --- Excel & File Processing ---
+openpyxl>=3.1.0
 
-# PDF and document processing dependencies
+# --- Docs & Utils ---
+Jinja2==3.1.4
+MarkupSafe==2.1.5
+markdown-it-py==3.0.0
+mdurl==0.1.2
+Pygments==2.18.0
+orjson==3.10.3
+ujson==5.10.0
+python-dotenv==1.0.1
+certifi==2024.2.2
+dnspython==2.6.1
+shellingham==1.5.4
+PyYAML==6.0.1
+
+# --- PDF and Document Processing ---
 reportlab>=4.0.7
 python-docx>=1.1.0

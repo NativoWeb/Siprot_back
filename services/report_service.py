@@ -34,7 +34,7 @@ class ReportService:
             db.commit()
             
             # Recopilar datos
-            datos = self.data_service.recopilar_datos(tipo, parametros)
+            data = self.data_service.get_strategic_dashboard_data()
             
             # Generar PDF
             temp_file_path = self.pdf_service.generar_pdf(
