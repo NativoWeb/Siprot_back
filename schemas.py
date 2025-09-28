@@ -475,3 +475,14 @@ class DocumentTypeResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+# ==================== DEMAND INDICATORS ====================
+
+class DemandIndicatorCreate(BaseModel):
+    sector: str
+    year: int
+    demand_value: float
+    source: Optional[str] = None
+
+    class Config:
+        from_attributes = True

@@ -24,7 +24,7 @@ def get_ml_projections(
     years: int = 10,
     sector: Optional[str] = None,
     db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["planeacion", "directivos", "superadmin"]))
+    current_user: User = Depends(require_role(["planeacion", "administrativo", "superadmin"]))
 ) -> Dict:
     """
     Genera proyecciones de programas educativos usando Darts (ExponentialSmoothing).
