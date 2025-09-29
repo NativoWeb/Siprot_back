@@ -549,33 +549,69 @@ class PDFService:
             story.append(tabla_indicadores)
 
     def _agregar_seccion_escenarios(self, story: List, escenarios: Dict[str, Any]):
-        """Agrega sección de análisis prospectivo"""
-        lista_escenarios = escenarios.get("escenarios", [])
-        
+        """Agrega sección de análisis prospectivo con campos de la tabla scenarios"""
+        prospectiva = escenarios.get("prospectiva", escenarios)
+        lista_escenarios = prospectiva.get("escenarios", [])
+
+
         for escenario in lista_escenarios:
-            nombre = escenario.get("nombre", "Escenario")
-            story.append(Paragraph(nombre, self.styles['SubsectionTitle']))
-            
+            # Nombre
+            story.append(Paragraph(escenario.get("nombre", "Escenario"), self.styles['SubsectionTitle']))
+
+            # Tipo
+            tipo = escenario.get("tipo")
+            if tipo:
+                story.append(Paragraph(f"Tipo: {tipo}", self.styles['Conclusion']))
+
+            # Descripción
             descripcion = escenario.get("descripcion", "")
             if descripcion:
                 story.append(Paragraph(descripcion, self.styles['ExecutiveSummary']))
-            
-            # Información del escenario
-            info_escenario = []
-            if escenario.get("probabilidad"):
-                info_escenario.append(f"Probabilidad: {escenario['probabilidad']}%")
-            if escenario.get("impacto"):
-                info_escenario.append(f"Impacto: {escenario['impacto']}")
-            
-            if info_escenario:
-                story.append(Paragraph(" | ".join(info_escenario), self.styles['Highlight']))
-            
-            # Recomendaciones
-            recomendaciones = escenario.get("recomendaciones", [])
-            if recomendaciones:
-                story.append(Paragraph("Recomendaciones:", self.styles['Recommendation']))
-                for rec in recomendaciones:
-                    story.append(Paragraph(f"• {rec}", self.styles['Conclusion']))
+
+            # Parámetros
+            parametros = escenario.get("parametros", {})
+            if parametros:
+                story.append(Paragraph("Parámetros:", self.styles['SubsectionTitle']))
+                for k, v in parametros.items():
+                    story.append(Paragraph(f"• {k}: {v}", self.styles['Conclusion']))
+
+            story.append(Spacer(1, 15))
+
+        # Tendencias sectoriales
+        tendencias = escenarios.get("tendencias_sectoriales", [])
+        if tendencias:
+            story.append(Paragraph("Tendencias Sectoriales", self.styles['SubsectionTitle']))
+
+            tendencias_data = [['Sector', 'Crecimiento Esperado', 'Demanda', 'Factores Clave']]
+            for t in tendencias:
+                factores = ", ".join(t.get("factores", [])) if t.get("factores") else "N/A"
+                tendencias_data.append([
+                    t.get("sector", ""),
+                    f"{t.get('crecimiento_esperado', 0)}%",
+                    t.get("demanda", ""),
+                    factores
+                ])
+
+            tabla_tendencias = Table(tendencias_data, colWidths=[1.5*inch, 1.2*inch, 1*inch, 2.3*inch])
+            tabla_tendencias.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), self.institutional_colors["secondary"]),
+                ('TEXTCOLOR', (0, 0), (-1, 0), white),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('GRID', (0, 0), (-1, -1), 1, black),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#F0F0F0')])
+            ]))
+
+            story.append(tabla_tendencias)
+
+        # Factores clave
+        factores = escenarios.get("factores_clave", [])
+        if factores:
+            story.append(Spacer(1, 15))
+            story.append(Paragraph("Factores Clave", self.styles['SubsectionTitle']))
+            for f in factores:
+                story.append(Paragraph(f"• {f}", self.styles['Conclusion']))
             
             story.append(Spacer(1, 15))
         
@@ -977,63 +1013,46 @@ class PDFService:
         return story
     
     def _generar_reporte_prospectiva_mejorado(self, datos: Dict[str, Any], parametros, reporte_id: int) -> List:
-        """Genera reporte de prospectiva mejorado para uso estratégico"""
+        """Genera reporte de prospectiva simplificado mostrando solo campos de la tabla scenarios"""
         story = []
-        
+
         # Header
         story.extend(self._generar_header("Análisis de Prospectiva Estratégica", reporte_id))
-        
+
+        # Extraer bloque prospectiva
+        prospectiva = datos.get("prospectiva", datos)
+
         # Escenarios
         story.append(Paragraph("Análisis de Escenarios", self.styles['SectionTitle']))
-        
-        escenarios = datos.get('escenarios', [])
+
+        escenarios = prospectiva.get('escenarios', [])
         for escenario in escenarios:
-            story.append(Paragraph(f"<b>{escenario['nombre']}</b>", self.styles['SubsectionTitle']))
-            story.append(Paragraph(escenario['descripcion'], self.styles['ExecutiveSummary']))
-            story.append(Paragraph(f"Probabilidad: {escenario['probabilidad']}% | Impacto: {escenario['impacto']}", 
-                                 self.styles['Highlight']))
-            
-            # Recomendaciones
-            story.append(Paragraph("Recomendaciones:", self.styles['Recommendation']))
-            for rec in escenario['recomendaciones']:
-                story.append(Paragraph(f"• {rec}", self.styles['Conclusion']))
+            story.append(Paragraph(f"<b>{escenario.get('nombre', 'Escenario')}</b>", self.styles['SubsectionTitle']))
+
+            descripcion = escenario.get('descripcion', '')
+            if descripcion:
+                story.append(Paragraph(descripcion, self.styles['ExecutiveSummary']))
+
+            parametros_json = escenario.get('parametros', {})
+            if parametros_json:
+                story.append(Paragraph("Parámetros:", self.styles['SubsectionTitle']))
+                for k, v in parametros_json.items():
+                    story.append(Paragraph(f"• {k}: {v}", self.styles['Conclusion']))
+
             story.append(Spacer(1, 15))
-        
+
         # Tendencias sectoriales
         story.append(Paragraph("Tendencias Sectoriales", self.styles['SectionTitle']))
-        
-        tendencias = datos.get('tendencias_sectoriales', [])
-        if tendencias:
-            tendencias_data = [['Sector', 'Crecimiento Esperado', 'Demanda', 'Factores Clave']]
-            for t in tendencias:
-                factores = ", ".join(t.get("factores", [])) if t.get("factores") else "N/A"
-                tendencias_data.append([
-                    t.get("sector", ""),
-                    f"{t.get('crecimiento_esperado', 0)}%",
-                    t.get("demanda", ""),
-                    factores
-                ])
-            
-            tendencias_table = Table(tendencias_data, colWidths=[1.5*inch, 1.2*inch, 1*inch, 2.3*inch])
-            tendencias_table.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), self.institutional_colors["secondary"]),
-                ('TEXTCOLOR', (0, 0), (-1, 0), white),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, -1), 9),
-                ('GRID', (0, 0), (-1, -1), 1, black),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#F0F0F0')])
-            ]))
-            
-            story.append(tendencias_table)
+        tendencias = prospectiva.get('tendencias_sectoriales', [])
+        ...
         
         # Factores clave
         story.append(Spacer(1, 20))
         story.append(Paragraph("Factores Clave", self.styles['SectionTitle']))
-        factores = datos.get('factores_clave', [])
+        factores = prospectiva.get('factores_clave', [])
         for factor in factores:
             story.append(Paragraph(f"• {factor}", self.styles['ExecutiveSummary']))
-        
+
         return story
     
     def _generar_reporte_oferta_mejorado(self, datos: Dict[str, Any], parametros, reporte_id: int) -> List:

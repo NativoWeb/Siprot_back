@@ -24,7 +24,7 @@ async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db)
 ):
-    logger.info(f"[v0] Attempting to validate token: {credentials.credentials[:20]}...")
+    logger.info(f"Attempting to validate token: {credentials.credentials[:20]}...")
     
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,

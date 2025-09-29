@@ -1,8 +1,8 @@
 import os
 from datetime import datetime
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
-from models import Reporte, User
+from models import Reporte
 from schemas import TipoReporte, ParametrosReporte, EstadoReporte
 from services.pdf_service import PDFService
 from services.data_collector_service import IntegratedDataCollectorService
@@ -107,11 +107,13 @@ class ImprovedReportService:
                 return {"valido": False, "errores": [f"Error en recolección: {datos['error']}"]}
             
             if tipo == TipoReporte.INDICADORES:
-                if not datos.get("indicadores", {}).get("indicadores"):
+                indicadores = datos.get("indicadores", {}).get("lista", [])
+                if not indicadores:
                     validacion["errores"].append("No se encontraron indicadores")
                     validacion["valido"] = False
             elif tipo == TipoReporte.PROSPECTIVA:
-                if not datos.get("prospectiva", {}).get("escenarios"):
+                escenarios = datos.get("escenarios") or datos.get("prospectiva", {}).get("escenarios")
+                if not escenarios:
                     validacion["errores"].append("No se encontraron escenarios prospectivos")
                     validacion["valido"] = False
             elif tipo == TipoReporte.OFERTA_EDUCATIVA:
@@ -153,8 +155,8 @@ class ImprovedReportService:
         indicadores_data = datos.get("indicadores", {})
         return {
             "tipo_reporte": "indicadores",
-            "indicadores": indicadores_data.get("indicadores", []),
-            "resumen": indicadores_data.get("metricas_resumen", {}),
+            "indicadores": indicadores_data.get("lista", []),
+            "resumen": indicadores_data.get("resumen", {}),
         }
     
     def _process_prospective_report_data(self, datos: Dict[str, Any], parametros: ParametrosReporte) -> Dict[str, Any]:
@@ -194,7 +196,10 @@ class ImprovedReportService:
         return dofa_data
     
     def _format_indicators_for_report(self, indicators_data: Dict[str, Any]) -> Dict[str, Any]:
-        return indicators_data
+        return {
+            "lista": indicators_data.get("lista", []),
+            "resumen": indicators_data.get("resumen", {})
+        }
     
     def _format_scenarios_for_report(self, scenarios_data: Dict[str, Any]) -> Dict[str, Any]:
         return scenarios_data
