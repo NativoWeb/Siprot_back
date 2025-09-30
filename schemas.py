@@ -46,6 +46,7 @@ class LoginResponse(BaseModel):
     message: str
     user: UserResponse
     access_token: str
+    refresh_token: str 
     token_type: str
 
 # ==================== DOCUMENTS ====================

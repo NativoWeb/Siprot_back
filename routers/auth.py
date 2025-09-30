@@ -17,7 +17,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 # 🔐 Configuración de seguridad
 SECRET_KEY = "tu-clave-secreta-muy-segura-aqui-cambiar-en-produccion"
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 10      # Access token muy corto
+ACCESS_TOKEN_EXPIRE_MINUTES = 5      # Access token muy corto
 REFRESH_TOKEN_EXPIRE_DAYS = 7        # Refresh token más largo
 
 # Roles válidos
@@ -134,7 +134,7 @@ def login(login_data: LoginRequest, db: Session = Depends(get_db)):
 
 # 🔄 Refrescar token
 @router.post("/refresh")
-def refresh_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+def refresh_token(credentials: HTTPAuthorizationCredentials = Depends(security), db: Session = Depends(get_db)):
     try:
         payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
         if payload.get("type") != "refresh":
@@ -144,8 +144,13 @@ def refresh_token(credentials: HTTPAuthorizationCredentials = Depends(security))
         if not user_email:
             raise HTTPException(status_code=401, detail="Token inválido")
         
-        # Crear nuevo access token
-        new_access_token = create_access_token(data={"sub": user_email})
+        # Buscar usuario en la base de datos para obtener el rol
+        user = db.query(User).filter(User.email == user_email).first()
+        if not user:
+            raise HTTPException(status_code=401, detail="Usuario no encontrado")
+        
+        # Crear nuevo access token incluyendo rol
+        new_access_token = create_access_token(data={"sub": user_email, "role": user.role})
         
         return {
             "access_token": new_access_token,
@@ -153,4 +158,5 @@ def refresh_token(credentials: HTTPAuthorizationCredentials = Depends(security))
         }
     except JWTError:
         raise HTTPException(status_code=401, detail="Refresh token inválido o expirado")
+
 
