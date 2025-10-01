@@ -504,3 +504,4 @@ def get_scenario_color(scenario_type: str) -> str:
         "pesimista": "#EF4444"    # Rojo
     }
     return colors.get(scenario_type, "#6B7280")
+
