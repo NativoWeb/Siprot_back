@@ -17,6 +17,7 @@ from reportlab.graphics import renderPDF
 from reportlab.pdfgen import canvas
 from schemas import TipoReporte, ParametrosReporte
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -262,7 +263,6 @@ class PDFService:
         """
         story = []
         
-        
         # 1. PORTADA CON TÍTULO Y FECHA
         portada = datos.get("portada", {})
         story.append(Paragraph(portada.get("titulo", "Informe Estratégico Consolidado"), self.styles['SENATitle']))
@@ -289,32 +289,41 @@ class PDFService:
         story.append(tabla_portada)
         story.append(PageBreak())
         
-        # 2. TABLA DE CONTENIDO
+        # 2. TABLA DE CONTENIDO MEJORADA
         story.append(Paragraph("Tabla de Contenido", self.styles['SectionTitle']))
         story.append(Spacer(1, 20))
         
-        tabla_contenido = datos.get("tabla_contenido", [])
-        if tabla_contenido:
-            contenido_data = [['Sección', 'Página']]
-            for item in tabla_contenido:
-                contenido_data.append([item.get("seccion", ""), str(item.get("pagina", ""))])
-            
-            tabla_contenido_pdf = Table(contenido_data, colWidths=[4*inch, 1*inch])
-            tabla_contenido_pdf.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), self.institutional_colors["primary"]),
-                ('TEXTCOLOR', (0, 0), (-1, 0), white),
-                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
-                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, -1), 10),
-                ('GRID', (0, 0), (-1, -1), 1, black),
-                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            ]))
-            
-            story.append(tabla_contenido_pdf)
+        # Generar tabla de contenido automáticamente
+        secciones = [
+            ("1. Resumen Ejecutivo", "1"),
+            ("2. Análisis DOFA", "2"), 
+            ("3. Indicadores Estratégicos", "3"),
+            ("4. Análisis Prospectivo", "4"),
+            ("5. Oferta Educativa", "5"),
+            ("6. Documentos de Referencia", "6"),
+            ("7. Conclusiones y Recomendaciones", "7")
+        ]
         
+        contenido_data = [['Sección', 'Página']]
+        for seccion, pagina in secciones:
+            contenido_data.append([seccion, pagina])
+        
+        tabla_contenido_pdf = Table(contenido_data, colWidths=[4*inch, 1*inch])
+        tabla_contenido_pdf.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), self.institutional_colors["primary"]),
+            ('TEXTCOLOR', (0, 0), (-1, 0), white),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('GRID', (0, 0), (-1, -1), 1, black),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#F8F9FA')])
+        ]))
+        
+        story.append(tabla_contenido_pdf)
         story.append(PageBreak())
         
-        # 3. RESUMEN EJECUTIVO
+        # 3. RESUMEN EJECUTIVO (página 1)
         story.append(Paragraph("1. Resumen Ejecutivo", self.styles['SectionTitle']))
         story.append(Spacer(1, 15))
         
@@ -549,99 +558,157 @@ class PDFService:
             story.append(tabla_indicadores)
 
     def _agregar_seccion_escenarios(self, story: List, escenarios: Dict[str, Any]):
-        """Agrega sección de análisis prospectivo con campos de la tabla scenarios"""
+        """Agrega sección de análisis prospectivo con tablas mejoradas"""
         prospectiva = escenarios.get("prospectiva", escenarios)
         lista_escenarios = prospectiva.get("escenarios", [])
 
+        if lista_escenarios:
+            # Tabla resumen de escenarios
+            story.append(Paragraph("Resumen de Escenarios", self.styles['SubsectionTitle']))
+            
+            escenarios_data = [['Nombre', 'Tipo', 'Descripción', 'Parámetros Clave']]
+            for escenario in lista_escenarios[:5]:  # Máximo 5 escenarios en tabla resumen
+                nombre = escenario.get("nombre", "N/A")[:30] + "..." if len(escenario.get("nombre", "")) > 30 else escenario.get("nombre", "N/A")
+                tipo = escenario.get("tipo", "N/A")
+                descripcion = escenario.get("descripcion", "N/A")[:50] + "..." if len(escenario.get("descripcion", "")) > 50 else escenario.get("descripcion", "N/A")
+                
+                # Extraer parámetros clave
+                parametros = escenario.get("parametros", {})
+                parametros_clave = []
+                if isinstance(parametros, dict):
+                    for key, value in list(parametros.items())[:2]:  # Primeros 2 parámetros
+                        parametros_clave.append(f"{key}: {value}")
+                
+                parametros_text = ", ".join(parametros_clave) if parametros_clave else "Sin parámetros"
+                parametros_text = parametros_text[:40] + "..." if len(parametros_text) > 40 else parametros_text
+                
+                escenarios_data.append([nombre, tipo, descripcion, parametros_text])
+            
+            tabla_escenarios = Table(escenarios_data, colWidths=[1.5*inch, 1*inch, 2*inch, 1.5*inch])
+            tabla_escenarios.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), self.institutional_colors["secondary"]),
+                ('TEXTCOLOR', (0, 0), (-1, 0), white),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 1, black),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#F8F9FA')])
+            ]))
+            
+            story.append(tabla_escenarios)
+            story.append(Spacer(1, 20))
 
-        for escenario in lista_escenarios:
-            # Nombre
-            story.append(Paragraph(escenario.get("nombre", "Escenario"), self.styles['SubsectionTitle']))
-
-            # Tipo
-            tipo = escenario.get("tipo")
-            if tipo:
-                story.append(Paragraph(f"Tipo: {tipo}", self.styles['Conclusion']))
-
-            # Descripción
-            descripcion = escenario.get("descripcion", "")
-            if descripcion:
-                story.append(Paragraph(descripcion, self.styles['ExecutiveSummary']))
-
-            # Parámetros
-            parametros = escenario.get("parametros", {})
-            if parametros:
-                story.append(Paragraph("Parámetros:", self.styles['SubsectionTitle']))
-                for k, v in parametros.items():
-                    story.append(Paragraph(f"• {k}: {v}", self.styles['Conclusion']))
-
+        # Detalle de cada escenario en tablas individuales
+        for i, escenario in enumerate(lista_escenarios, 1):
+            story.append(Paragraph(f"Escenario {i}: {escenario.get('nombre', 'Escenario')}", self.styles['SubsectionTitle']))
+            
+            # Tabla de información básica del escenario
+            info_data = [
+                ['Campo', 'Valor'],
+                ['Nombre', escenario.get("nombre", "N/A")],
+                ['Tipo', escenario.get("tipo", "N/A")],
+                ['Descripción', escenario.get("descripcion", "N/A")]
+            ]
+            
+            info_table = Table(info_data, colWidths=[1.5*inch, 4.5*inch])
+            info_table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), self.institutional_colors["primary"]),
+                ('TEXTCOLOR', (0, 0), (-1, 0), white),
+                ('ALIGN', (0, 0), (0, -1), 'LEFT'),
+                ('ALIGN', (1, 0), (1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('GRID', (0, 0), (-1, -1), 1, black),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#F8F9FA')])
+            ]))
+            
+            story.append(info_table)
             story.append(Spacer(1, 15))
+            
+            # Tabla de parámetros si existen
+            parametros = escenario.get("parametros", {})
+            if parametros and isinstance(parametros, dict):
+                story.append(Paragraph("Parámetros del Escenario", self.styles['SubsectionTitle']))
+                
+                parametros_data = [['Parámetro', 'Valor']]
+                for key, value in parametros.items():
+                    valor_str = str(value)
+                    if len(valor_str) > 50:
+                        valor_str = valor_str[:50] + "..."
+                    parametros_data.append([key, valor_str])
+                
+                parametros_table = Table(parametros_data, colWidths=[2*inch, 4*inch])
+                parametros_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), self.institutional_colors["accent"]),
+                    ('TEXTCOLOR', (0, 0), (-1, 0), white),
+                    ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                    ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                    ('FONTSIZE', (0, 0), (-1, -1), 8),
+                    ('GRID', (0, 0), (-1, -1), 1, black),
+                    ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                    ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#FFF8E1')])
+                ]))
+                
+                story.append(parametros_table)
+                story.append(Spacer(1, 15))
 
-        # Tendencias sectoriales
+        # Tendencias sectoriales en tabla
         tendencias = escenarios.get("tendencias_sectoriales", [])
         if tendencias:
             story.append(Paragraph("Tendencias Sectoriales", self.styles['SubsectionTitle']))
-
+            
             tendencias_data = [['Sector', 'Crecimiento Esperado', 'Demanda', 'Factores Clave']]
             for t in tendencias:
                 factores = ", ".join(t.get("factores", [])) if t.get("factores") else "N/A"
+                if len(factores) > 60:
+                    factores = factores[:60] + "..."
+                
                 tendencias_data.append([
                     t.get("sector", ""),
-                    f"{t.get('crecimiento_esperado', 0)}%",
+                    f"{t.get('crecimiento_esperado', 0)}%" if t.get('crecimiento_esperado') else "N/A",
                     t.get("demanda", ""),
                     factores
                 ])
-
+            
             tabla_tendencias = Table(tendencias_data, colWidths=[1.5*inch, 1.2*inch, 1*inch, 2.3*inch])
             tabla_tendencias.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), self.institutional_colors["secondary"]),
                 ('TEXTCOLOR', (0, 0), (-1, 0), white),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                ('FONTSIZE', (0, 0), (-1, -1), 9),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
                 ('GRID', (0, 0), (-1, -1), 1, black),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
                 ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#F0F0F0')])
             ]))
-
+            
             story.append(tabla_tendencias)
+            story.append(Spacer(1, 15))
 
         # Factores clave
         factores = escenarios.get("factores_clave", [])
         if factores:
-            story.append(Spacer(1, 15))
             story.append(Paragraph("Factores Clave", self.styles['SubsectionTitle']))
-            for f in factores:
-                story.append(Paragraph(f"• {f}", self.styles['Conclusion']))
             
-            story.append(Spacer(1, 15))
-        
-        # Tendencias sectoriales
-        tendencias = escenarios.get("tendencias_sectoriales", [])
-        if tendencias:
-            story.append(Paragraph("Tendencias Sectoriales", self.styles['SubsectionTitle']))
+            factores_data = [['#', 'Factor Clave']]
+            for i, factor in enumerate(factores, 1):
+                factores_data.append([str(i), factor])
             
-            tendencias_data = [['Sector', 'Crecimiento Esperado', 'Demanda', 'Factores Clave']]
-            for t in tendencias:
-                factores = ", ".join(t.get("factores", [])) if t.get("factores") else "N/A"
-                tendencias_data.append([
-                    t.get("sector", ""),
-                    f"{t.get('crecimiento_esperado', 0)}%",
-                    t.get("demanda", ""),
-                    factores
-                ])
-            
-            tabla_tendencias = Table(tendencias_data, colWidths=[1.5*inch, 1.2*inch, 1*inch, 2.3*inch])
-            tabla_tendencias.setStyle(TableStyle([
-                ('BACKGROUND', (0, 0), (-1, 0), self.institutional_colors["secondary"]),
+            tabla_factores = Table(factores_data, colWidths=[0.5*inch, 5.5*inch])
+            tabla_factores.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), self.institutional_colors["primary"]),
                 ('TEXTCOLOR', (0, 0), (-1, 0), white),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
                 ('FONTSIZE', (0, 0), (-1, -1), 9),
                 ('GRID', (0, 0), (-1, -1), 1, black),
-                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#F0F0F0')])
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#F8F9FA')])
             ]))
             
-            story.append(tabla_tendencias)
+            story.append(tabla_factores)
 
     def _agregar_seccion_oferta(self, story: List, oferta: Dict[str, Any]):
         """Agrega sección de oferta educativa"""
@@ -1013,7 +1080,7 @@ class PDFService:
         return story
     
     def _generar_reporte_prospectiva_mejorado(self, datos: Dict[str, Any], parametros, reporte_id: int) -> List:
-        """Genera reporte de prospectiva simplificado mostrando solo campos de la tabla scenarios"""
+        """Genera reporte de prospectiva con tablas mejoradas"""
         story = []
 
         # Header
@@ -1022,36 +1089,163 @@ class PDFService:
         # Extraer bloque prospectiva
         prospectiva = datos.get("prospectiva", datos)
 
-        # Escenarios
+        # Escenarios en tabla principal
         story.append(Paragraph("Análisis de Escenarios", self.styles['SectionTitle']))
-
+        
         escenarios = prospectiva.get('escenarios', [])
-        for escenario in escenarios:
-            story.append(Paragraph(f"<b>{escenario.get('nombre', 'Escenario')}</b>", self.styles['SubsectionTitle']))
-
-            descripcion = escenario.get('descripcion', '')
-            if descripcion:
-                story.append(Paragraph(descripcion, self.styles['ExecutiveSummary']))
-
-            parametros_json = escenario.get('parametros', {})
-            if parametros_json:
-                story.append(Paragraph("Parámetros:", self.styles['SubsectionTitle']))
-                for k, v in parametros_json.items():
-                    story.append(Paragraph(f"• {k}: {v}", self.styles['Conclusion']))
-
+        if escenarios:
+            # Tabla resumen de escenarios
+            escenarios_data = [['Nombre', 'Tipo', 'Descripción', 'Estado']]
+            for escenario in escenarios:
+                nombre = escenario.get('nombre', 'N/A')
+                tipo = escenario.get('tipo', 'N/A')
+                descripcion = escenario.get('descripcion', 'N/A')[:80] + "..." if len(escenario.get('descripcion', '')) > 80 else escenario.get('descripcion', 'N/A')
+                
+                # Determinar estado basado en parámetros
+                parametros = escenario.get('parametros', {})
+                estado = "Activo" if parametros else "En configuración"
+                
+                escenarios_data.append([nombre, tipo, descripcion, estado])
+            
+            tabla_escenarios = Table(escenarios_data, colWidths=[1.5*inch, 1*inch, 3*inch, 1*inch])
+            tabla_escenarios.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), self.institutional_colors["primary"]),
+                ('TEXTCOLOR', (0, 0), (-1, 0), white),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 1, black),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#F8F9FA')])
+            ]))
+            
+            story.append(tabla_escenarios)
+            story.append(Spacer(1, 20))
+            
+            # Detalles de parámetros por escenario
+            for i, escenario in enumerate(escenarios, 1):
+                story.append(Paragraph(f"Detalles del Escenario {i}: {escenario.get('nombre', '')}", self.styles['SubsectionTitle']))
+                
+                parametros = escenario.get('parametros', {})
+                if parametros:
+                    parametros_data = [['Parámetro', 'Valor', 'Tipo', 'Impacto']]
+                    for key, value in parametros.items():
+                        valor_str = str(value)
+                        tipo_dato = type(value).__name__
+                        
+                        # Clasificar impacto basado en el tipo de parámetro
+                        if any(word in key.lower() for word in ['riesgo', 'amenaza', 'problema']):
+                            impacto = "Alto"
+                        elif any(word in key.lower() for word in ['oportunidad', 'beneficio', 'ventaja']):
+                            impacto = "Bajo" 
+                        else:
+                            impacto = "Medio"
+                        
+                        parametros_data.append([key, valor_str, tipo_dato, impacto])
+                    
+                    if len(parametros_data) > 1:  # Si hay parámetros además del header
+                        tabla_parametros = Table(parametros_data, colWidths=[1.5*inch, 2*inch, 1*inch, 1*inch])
+                        tabla_parametros.setStyle(TableStyle([
+                            ('BACKGROUND', (0, 0), (-1, 0), self.institutional_colors["secondary"]),
+                            ('TEXTCOLOR', (0, 0), (-1, 0), white),
+                            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                            ('FONTSIZE', (0, 0), (-1, -1), 7),
+                            ('GRID', (0, 0), (-1, -1), 1, black),
+                            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                            ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#F0F0F0')])
+                        ]))
+                        
+                        story.append(tabla_parametros)
+                        story.append(Spacer(1, 15))
+        else:
+            story.append(Paragraph("No hay escenarios prospectivos disponibles", self.styles['ExecutiveSummary']))
             story.append(Spacer(1, 15))
-
+        
         # Tendencias sectoriales
         story.append(Paragraph("Tendencias Sectoriales", self.styles['SectionTitle']))
         tendencias = prospectiva.get('tendencias_sectoriales', [])
-        ...
+        
+        if tendencias:
+            tendencias_data = [['Sector', 'Crecimiento (%)', 'Demanda', 'Factores Clave', 'Horizonte']]
+            for t in tendencias:
+                factores = ", ".join(t.get("factores", [])) if t.get("factores") else "N/A"
+                if len(factores) > 40:
+                    factores = factores[:40] + "..."
+                
+                # Determinar horizonte temporal basado en crecimiento
+                crecimiento = t.get('crecimiento_esperado', 0)
+                if crecimiento > 10:
+                    horizonte = "Corto plazo"
+                elif crecimiento > 5:
+                    horizonte = "Medio plazo"
+                else:
+                    horizonte = "Largo plazo"
+                
+                tendencias_data.append([
+                    t.get("sector", ""),
+                    f"{crecimiento}%" if crecimiento else "N/A",
+                    t.get("demanda", ""),
+                    factores,
+                    horizonte
+                ])
+            
+            tabla_tendencias = Table(tendencias_data, colWidths=[1.2*inch, 1*inch, 0.8*inch, 1.5*inch, 1*inch])
+            tabla_tendencias.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), self.institutional_colors["accent"]),
+                ('TEXTCOLOR', (0, 0), (-1, 0), white),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 7),
+                ('GRID', (0, 0), (-1, -1), 1, black),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#FFF8E1')])
+            ]))
+            
+            story.append(tabla_tendencias)
+        else:
+            story.append(Paragraph("No hay tendencias sectoriales disponibles", self.styles['ExecutiveSummary']))
         
         # Factores clave
         story.append(Spacer(1, 20))
         story.append(Paragraph("Factores Clave", self.styles['SectionTitle']))
         factores = prospectiva.get('factores_clave', [])
-        for factor in factores:
-            story.append(Paragraph(f"• {factor}", self.styles['ExecutiveSummary']))
+        
+        if factores:
+            factores_data = [['#', 'Factor Clave', 'Área de Impacto', 'Prioridad']]
+            for i, factor in enumerate(factores, 1):
+                # Determinar área de impacto y prioridad basado en contenido
+                factor_lower = factor.lower()
+                if any(word in factor_lower for word in ['tecnolog', 'digital', 'innovación']):
+                    area = "Tecnología"
+                    prioridad = "Alta"
+                elif any(word in factor_lower for word in ['mercado', 'económ', 'financier']):
+                    area = "Económico"
+                    prioridad = "Alta"
+                elif any(word in factor_lower for word in ['social', 'cultural', 'demográfic']):
+                    area = "Social"
+                    prioridad = "Media"
+                else:
+                    area = "General"
+                    prioridad = "Media"
+                
+                factores_data.append([str(i), factor, area, prioridad])
+            
+            tabla_factores = Table(factores_data, colWidths=[0.5*inch, 3*inch, 1.2*inch, 1*inch])
+            tabla_factores.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), self.institutional_colors["primary"]),
+                ('TEXTCOLOR', (0, 0), (-1, 0), white),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('GRID', (0, 0), (-1, -1), 1, black),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#F8F9FA')])
+            ]))
+            
+            story.append(tabla_factores)
+        else:
+            story.append(Paragraph("No hay factores clave identificados", self.styles['ExecutiveSummary']))
 
         return story
     
@@ -1238,3 +1432,36 @@ class PDFService:
             'rojo': HexColor('#dc3545')
         }
         return colores.get(estado.lower(), HexColor('#6c757d'))
+
+    def _process_prospective_report_data(self, datos: Dict[str, Any], parametros: ParametrosReporte) -> Dict[str, Any]:
+        """Procesa datos de prospectiva para mejorar la visualización en tablas"""
+        prospectiva_data = datos.get("prospectiva", {})
+        
+        # Asegurar que los escenarios tengan estructura consistente
+        escenarios = prospectiva_data.get("escenarios", [])
+        escenarios_procesados = []
+        
+        for escenario in escenarios:
+            # Normalizar parámetros
+            parametros = escenario.get("parametros", {})
+            if isinstance(parametros, str):
+                try:
+                    parametros = json.loads(parametros)
+                except:
+                    parametros = {"raw": parametros}
+            
+            escenario_procesado = {
+                "nombre": escenario.get("nombre", "Escenario sin nombre"),
+                "tipo": escenario.get("tipo", "No especificado"),
+                "descripcion": escenario.get("descripcion", "Sin descripción disponible"),
+                "parametros": parametros
+            }
+            escenarios_procesados.append(escenario_procesado)
+        
+        return {
+            "prospectiva": {
+                "escenarios": escenarios_procesados,
+                "tendencias_sectoriales": prospectiva_data.get("tendencias_sectoriales", []),
+                "factores_clave": prospectiva_data.get("factores_clave", [])
+            }
+        }
