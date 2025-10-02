@@ -1,17 +1,68 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Body
 from sqlalchemy.orm import Session
 from typing import List, Dict, Optional
-from models import Document, User, Scenario, ScenarioProjection
+from pydantic import BaseModel
+from models import Document, User, Scenario, ScenarioProjection, ScenarioConfiguration
 from routers.auth import get_db, require_role
 from scenario_engine import ScenarioEngine, ScenarioType
 from dependencies import get_current_user
+from schemas import ScenarioConfigurationUpdate
 import pandas as pd
 import os
 import logging
 import chardet
+import json
 
 router = APIRouter(prefix="/scenarios", tags=["Escenarios"])
 logger = logging.getLogger(__name__)
+
+
+def sanitize_float(value):
+    """Convierte valores no JSON-compliant a valores seguros"""
+    import numpy as np
+    import math
+    
+    if value is None:
+        return 0.0
+    
+    try:
+        float_val = float(value)
+        if math.isinf(float_val) or math.isnan(float_val):
+            return 0.0
+        return float_val
+    except (ValueError, TypeError, OverflowError):
+        return 0.0
+
+
+def sanitize_projection_data(projections: List[Dict]) -> List[Dict]:
+    """Sanitiza los datos de proyecciones para asegurar compatibilidad JSON"""
+    sanitized = []
+    
+    for proj in projections:
+        sanitized_proj = {
+            'year': int(proj.get('year', 0)),
+            'sector': str(proj.get('sector', 'General')),
+            'base_value': sanitize_float(proj.get('base_value', 0)),
+            'multiplier': sanitize_float(proj.get('multiplier', 1.0)),
+            'values': {}
+        }
+        
+        # Sanitizar todos los valores dentro de 'values'
+        values = proj.get('values', {})
+        if isinstance(values, dict):
+            for key, val in values.items():
+                sanitized_proj['values'][str(key)] = sanitize_float(val)
+        
+        sanitized.append(sanitized_proj)
+    
+    return sanitized
+
+
+class ScenarioGenerationRequest(BaseModel):
+    """Modelo para la solicitud de generación de escenarios"""
+    scenario_types: Optional[List[str]] = ["tendencial", "optimista", "pesimista"]
+    years_ahead: int = 10
+    parameters: Optional[Dict[str, float]] = None
 
 
 def read_flexible_file(file_path: str, extension: str) -> pd.DataFrame:
@@ -20,7 +71,7 @@ def read_flexible_file(file_path: str, extension: str) -> pd.DataFrame:
     Lanza ValueError si no puede leer o si el DataFrame es inválido.
     """
     if extension.lower() == ".csv":
-        # Detect encoding (leer una porción para no cargar todo en memoria)
+        # Detect encoding
         with open(file_path, "rb") as f:
             sample = f.read(100000)
             result = chardet.detect(sample)
@@ -42,7 +93,6 @@ def read_flexible_file(file_path: str, extension: str) -> pd.DataFrame:
                 continue
 
         if df is None:
-            # intentar sin especificar separador (lectura por defecto)
             try:
                 df = pd.read_csv(file_path, encoding=detected_encoding)
             except Exception as e:
@@ -64,7 +114,6 @@ def read_flexible_file(file_path: str, extension: str) -> pd.DataFrame:
     # Normalizar texto y convertir números donde sea posible
     for col in df.columns:
         if df[col].dtype == object:
-            # quitar % y normalizar separadores decimales
             df[col] = (
                 df[col]
                 .astype(str)
@@ -72,7 +121,6 @@ def read_flexible_file(file_path: str, extension: str) -> pd.DataFrame:
                 .str.replace(",", ".", regex=False)
                 .str.strip()
             )
-            # intentar convertir a numérico, si falla se queda como object
             df[col] = pd.to_numeric(df[col], errors="ignore")
 
     return df
@@ -114,8 +162,7 @@ def get_csv_files(
 @router.post("/generate/{document_id}")
 def generate_scenarios_from_csv(
     document_id: int,
-    scenario_types: Optional[List[str]] = None,
-    years_ahead: int = 10,
+    request: ScenarioGenerationRequest = Body(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["planeacion", "administrativo"]))
 ):
@@ -123,18 +170,16 @@ def generate_scenarios_from_csv(
     Genera escenarios prospectivos basados en un archivo CSV/XLSX.
     Guarda las proyecciones en la tabla `scenario_projections`.
     """
-    if scenario_types is None:
-        scenario_types = ["tendencial", "optimista", "pesimista"]
+    scenario_types = request.scenario_types
+    years_ahead = request.years_ahead
+    custom_params = request.parameters or {}
 
-    # Validar tipos
-    allowed_types = {t.value if isinstance(t, ScenarioType) else t for t in [ScenarioType.TENDENCIAL, ScenarioType.OPTIMISTA, ScenarioType.PESIMISTA]}
-    # Adjusting allowed_types above depends on your enum implementation; if ScenarioType uses strings, you can set: allowed_types = {"tendencial","optimista","pesimista"}
-    # Fallback safe set:
+    logger.info(f"Parametros personalizados recibidos: {custom_params}")
+
     allowed_types = {"tendencial", "optimista", "pesimista"}
-
     bad_types = [t for t in scenario_types if t not in allowed_types]
     if bad_types:
-        raise HTTPException(status_code=400, detail=f"Tipo(s) de escenario inválido(s): {bad_types}")
+        raise HTTPException(status_code=400, detail=f"Tipo(s) de escenario invalido(s): {bad_types}")
 
     try:
         document = db.query(Document).filter(Document.id == document_id).first()
@@ -155,7 +200,7 @@ def generate_scenarios_from_csv(
             logger.exception("Error leyendo archivo")
             raise HTTPException(
                 status_code=400,
-                detail=f"Error al leer el archivo: {str(e)}. Verifique que el archivo tenga el formato correcto."
+                detail=f"Error al leer el archivo: {str(e)}"
             )
 
         engine = ScenarioEngine(db)
@@ -163,77 +208,82 @@ def generate_scenarios_from_csv(
 
         for scenario_type in scenario_types:
             try:
-                # Convertir a Enum si hace falta; si ScenarioType espera string, ajusta
-                try:
-                    scenario_enum = ScenarioType(scenario_type)
-                except Exception:
-                    # Si ScenarioType no recibe la cadena, intentar por nombre
-                    # Ajusta según la implementación de tu ScenarioType
-                    scenario_enum = None
-
-                # Buscar escenario existente (evita duplicados por documento)
+                scenario_enum = ScenarioType(scenario_type)
+                
                 existing_scenario = db.query(Scenario).filter(
                     Scenario.scenario_type == scenario_type,
                     Scenario.name.like(f"%{document.title}%")
                 ).first()
 
+                scenario_config = engine.scenarios.get(scenario_enum)
+                
                 if not existing_scenario:
                     scenario_data = {
-                        "name": f"{engine.scenarios.get(scenario_enum).name if scenario_enum else scenario_type} - {document.title}",
+                        "name": f"{scenario_config.name} - {document.title}",
                         "scenario_type": scenario_type,
-                        "description": (engine.scenarios.get(scenario_enum).description if scenario_enum else scenario_type) + f" Basado en: {document.title}",
+                        "description": f"{scenario_config.description} Basado en: {document.title}",
                         "parameters": {
                             "source_document_id": document_id,
-                            "multipliers": (engine.scenarios.get(scenario_enum).multipliers if scenario_enum else {}),
-                            "growth_rates": (engine.scenarios.get(scenario_enum).growth_rates if scenario_enum else {})
+                            "multipliers": scenario_config.multipliers,
+                            "growth_rates": scenario_config.growth_rates,
+                            "custom_parameters": custom_params
                         }
                     }
                     scenario = engine.create_scenario(scenario_data, current_user.id)
                 else:
                     scenario = existing_scenario
+                    if scenario.parameters:
+                        scenario.parameters["custom_parameters"] = custom_params
+                        db.commit()
 
-                # Generar proyecciones con el motor
-                projections = engine.generate_scenario_projections(scenario.id, df, years_ahead)
+                # Generar proyecciones con parametros personalizados
+                projections = engine.generate_scenario_projections(
+                    scenario.id, 
+                    df, 
+                    years_ahead,
+                    custom_params=custom_params
+                )
+
                 if not isinstance(projections, list):
                     logger.warning(f"Projections for scenario {scenario.id} is not a list; skipping")
                     projections = []
+                
+                # Sanitizar proyecciones para evitar valores inf/nan
+                projections = sanitize_projection_data(projections)
 
-                # Guardar proyecciones en BD (borrar anteriores para este scenario_id)
+                # Guardar proyecciones en BD
                 try:
-                    # borrar proyecciones antiguas
-                    deleted = db.query(ScenarioProjection).filter(ScenarioProjection.scenario_id == scenario.id).delete(synchronize_session=False)
+                    deleted = db.query(ScenarioProjection).filter(
+                        ScenarioProjection.scenario_id == scenario.id
+                    ).delete(synchronize_session=False)
+                    
                     if deleted:
-                        logger.debug(f"Se eliminaron {deleted} proyecciones antiguas para el escenario {scenario.id}")
+                        logger.debug(f"Eliminadas {deleted} proyecciones antiguas")
                     db.flush()
 
                     projection_objs = []
                     for p in projections:
-                        # cada 'p' debe tener al menos: year, values (dict por indicador), opcional sector, base_value, multiplier
                         year = p.get("year")
-                        sector = p.get("sector", p.get("sector_name", "General"))
+                        sector = p.get("sector", "General")
                         base_value_common = p.get("base_value", 0)
-                        multiplier_common = p.get("multiplier", p.get("multiplier_applied", 1.0))
+                        multiplier_common = p.get("multiplier", 1.0)
                         values = p.get("values", {})
 
-                        # Si 'values' es un number único (no dict), intentar mapear a un indicador por defecto
                         if isinstance(values, (int, float)):
-                            # crear un projection por defecto con indicador "value"
                             projection_objs.append(ScenarioProjection(
                                 scenario_id=scenario.id,
                                 sector=sector,
                                 year=int(year),
                                 projected_value=float(values),
-                                base_value=float(base_value_common or 0),
-                                multiplier_applied=float(multiplier_common or 1.0),
-                                indicator_type=p.get("indicator", "value")
+                                base_value=float(base_value_common),
+                                multiplier_applied=float(multiplier_common),
+                                indicator_type="value"
                             ))
                         elif isinstance(values, dict):
                             for indicator, val in values.items():
                                 try:
                                     projected_value = float(val) if val is not None else 0.0
                                 except Exception:
-                                    # si no se puede convertir, saltar
-                                    logger.debug(f"Valor no numérico para indicador {indicator} año {year}: {val}")
                                     continue
 
                                 projection_objs.append(ScenarioProjection(
@@ -241,33 +291,26 @@ def generate_scenarios_from_csv(
                                     sector=sector,
                                     year=int(year),
                                     projected_value=projected_value,
-                                    base_value=float(base_value_common or 0),
-                                    multiplier_applied=float(multiplier_common or 1.0),
+                                    base_value=float(base_value_common),
+                                    multiplier_applied=float(multiplier_common),
                                     indicator_type=str(indicator)
                                 ))
-                        else:
-                            logger.debug(f"Estructura de 'values' inesperada en proyección: {type(values)}")
 
                     if projection_objs:
                         db.add_all(projection_objs)
                         db.commit()
-                        logger.info(f"Guardadas {len(projection_objs)} proyecciones para escenario {scenario.id}")
-                    else:
-                        # Si no hay proyecciones, hacemos rollback de la eliminación para no dejar estado inconsistente
-                        db.rollback()
-                        logger.warning(f"No se generaron proyecciones válidas para escenario {scenario.id}")
+                        logger.info(f"Guardadas {len(projection_objs)} proyecciones")
+
                 except Exception as persist_exc:
                     db.rollback()
-                    logger.exception(f"Error guardando proyecciones para scenario {scenario.id}: {persist_exc}")
-                    # continuar con el siguiente escenario sin fallar todo el proceso
+                    logger.exception(f"Error guardando proyecciones: {persist_exc}")
 
-                # Preparar respuesta
                 scenarios_data[scenario_type] = {
                     "scenario_type": scenario_type,
                     "scenario_name": scenario.name,
                     "description": scenario.description,
                     "color": get_scenario_color(scenario_type),
-                    "data": projections,
+                    "data": projections,  # Ya sanitizadas
                     "parameters": scenario.parameters,
                     "source_document": {
                         "id": document.id,
@@ -278,26 +321,32 @@ def generate_scenarios_from_csv(
                         "total_years": len(projections),
                         "historical_years": len([p for p in projections if p.get('year', 0) <= pd.Timestamp.now().year]),
                         "future_years": len([p for p in projections if p.get('year', 0) > pd.Timestamp.now().year]),
-                        "indicators": list(projections[0].get('values', {}).keys()) if projections and projections[0].get('values') else []
+                        "indicators": list(projections[0].get('values', {}).keys()) if projections else []
                     }
                 }
 
-                logger.info(f"Escenario {scenario_type} (id={scenario.id}) generado con {len(projections)} puntos")
+                logger.info(f"Escenario {scenario_type} generado con {len(projections)} puntos")
+                
             except Exception as e:
-                logger.exception(f"Error generando escenario {scenario_type} para documento {document_id}: {e}")
-                # No abortamos todo el loop, pasamos al siguiente tipo
+                logger.exception(f"Error generando escenario {scenario_type}: {e}")
                 continue
 
         if not scenarios_data:
             raise HTTPException(status_code=500, detail="No se pudieron generar escenarios")
 
-        logger.info(f"Escenarios generados exitosamente para documento {document_id}")
+        # Validar que la respuesta sea JSON-serializable antes de devolverla
+        try:
+            json.dumps(scenarios_data)
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error serializando respuesta a JSON: {e}")
+            raise HTTPException(status_code=500, detail="Error en formato de datos generados")
+
         return scenarios_data
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Error inesperado en generación de escenarios")
+        logger.exception("Error inesperado")
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 
@@ -307,7 +356,7 @@ def compare_scenarios(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["planeacion", "administrativo", "instructor"]))
 ):
-    """Compara múltiples escenarios lado a lado"""
+    """Compara multiples escenarios lado a lado"""
     try:
         scenarios = db.query(Scenario).filter(Scenario.id.in_(scenario_ids)).all()
         if len(scenarios) != len(scenario_ids):
@@ -340,7 +389,7 @@ def list_existing_scenarios(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["planeacion", "administrativo", "instructor"]))
 ):
-    """Lista todos los escenarios existentes para visualización por instructores"""
+    """Lista todos los escenarios existentes"""
     try:
         scenarios = db.query(Scenario).filter(
             Scenario.is_active == True
@@ -348,10 +397,8 @@ def list_existing_scenarios(
 
         scenarios_list = []
         for scenario in scenarios:
-            # Get creator information
             creator = db.query(User).filter(User.id == scenario.created_by).first()
 
-            # Get source document if available
             source_document = None
             if scenario.parameters and 'source_document_id' in scenario.parameters:
                 doc_id = scenario.parameters['source_document_id']
@@ -397,7 +444,7 @@ def get_scenario_details(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["planeacion", "administrativo", "instructor"]))
 ):
-    """Obtiene los detalles completos de un escenario específico incluyendo proyecciones"""
+    """Obtiene los detalles completos de un escenario especifico"""
     try:
         scenario = db.query(Scenario).filter(
             Scenario.id == scenario_id,
@@ -407,24 +454,25 @@ def get_scenario_details(
         if not scenario:
             raise HTTPException(status_code=404, detail="Escenario no encontrado")
 
-        # Get creator information
         creator = db.query(User).filter(User.id == scenario.created_by).first()
 
         # Obtener proyecciones desde BD
-        projections_q = db.query(ScenarioProjection).filter(ScenarioProjection.scenario_id == scenario_id).order_by(ScenarioProjection.year.asc()).all()
+        projections_q = db.query(ScenarioProjection).filter(
+            ScenarioProjection.scenario_id == scenario_id
+        ).order_by(ScenarioProjection.year.asc()).all()
+        
         projections = []
         if projections_q:
-            # convertir a la estructura que usan tus endpoints (year + values dict)
-            # agrupamos por year
             by_year = {}
             for p in projections_q:
                 y = p.year
                 if y not in by_year:
                     by_year[y] = {"year": y, "sector": p.sector, "values": {}}
-                by_year[y]["values"][p.indicator_type] = p.projected_value
+                by_year[y]["values"][p.indicator_type] = sanitize_float(p.projected_value)
             projections = [by_year[y] for y in sorted(by_year.keys())]
+            projections = sanitize_projection_data(projections)
         else:
-            # Si no hay proyecciones guardadas, intentar regenerar si hay documento fuente
+            # Si no hay proyecciones guardadas, intentar regenerar
             source_document = None
             if scenario.parameters and 'source_document_id' in scenario.parameters:
                 doc_id = scenario.parameters['source_document_id']
@@ -436,14 +484,13 @@ def get_scenario_details(
                     if os.path.exists(file_path):
                         df = read_flexible_file(file_path, source_document.file_extension)
                         engine = ScenarioEngine(db)
-                        projections = engine.generate_scenario_projections(scenario.id, df, 10)
-                    else:
-                        projections = []
+                        custom_params = scenario.parameters.get('custom_parameters', {})
+                        projections = engine.generate_scenario_projections(
+                            scenario.id, df, 10, custom_params=custom_params
+                        )
+                        projections = sanitize_projection_data(projections)
                 except Exception as e:
-                    logger.warning(f"No se pudieron regenerar proyecciones para escenario {scenario_id}: {e}")
-                    projections = []
-            else:
-                projections = []
+                    logger.warning(f"No se pudieron regenerar proyecciones: {e}")
 
         scenario_details = {
             "id": scenario.id,
@@ -464,13 +511,12 @@ def get_scenario_details(
             "data": projections,
             "metadata": {
                 "total_years": len(projections),
-                "historical_years": len([p for p in projections if p.get('year', 0) <= pd.Timestamp.now().year]) if projections else 0,
-                "future_years": len([p for p in projections if p.get('year', 0) > pd.Timestamp.now().year]) if projections else 0,
-                "indicators": list(projections[0].get('values', {}).keys()) if projections and len(projections) > 0 else []
+                "historical_years": len([p for p in projections if p.get('year', 0) <= pd.Timestamp.now().year]),
+                "future_years": len([p for p in projections if p.get('year', 0) > pd.Timestamp.now().year]),
+                "indicators": list(projections[0].get('values', {}).keys()) if projections else []
             }
         }
 
-        # Adjuntar source_document si existe
         if scenario.parameters and 'source_document_id' in scenario.parameters:
             doc_id = scenario.parameters['source_document_id']
             src_doc = db.query(Document).filter(Document.id == doc_id).first()
@@ -499,9 +545,46 @@ def get_scenario_details(
 def get_scenario_color(scenario_type: str) -> str:
     """Colores por tipo de escenario"""
     colors = {
-        "tendencial": "#3B82F6",  # Azul
-        "optimista": "#10B981",   # Verde
-        "pesimista": "#EF4444"    # Rojo
+        "tendencial": "#3B82F6",
+        "optimista": "#10B981",
+        "pesimista": "#EF4444"
     }
     return colors.get(scenario_type, "#6B7280")
 
+@router.post("/configurations/set")
+def set_scenario_configuration(
+    request: ScenarioConfigurationUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["superadmin", "planeacion"]))
+):
+    """
+    Crea o actualiza los parámetros de un tipo de escenario.
+    """
+    try:
+        for param_name, param_value in request.parameters.items():
+            config = db.query(ScenarioConfiguration).filter(
+                ScenarioConfiguration.scenario_type == request.scenario_type.value,
+                ScenarioConfiguration.parameter_name == param_name
+            ).first()
+
+            if config:
+                # Actualizar
+                config.parameter_value = param_value
+                config.updated_by = current_user.id
+            else:
+                # Crear nuevo
+                config = ScenarioConfiguration(
+                    scenario_type=request.scenario_type.value,
+                    parameter_name=param_name,
+                    parameter_value=param_value,
+                    updated_by=current_user.id
+                )
+                db.add(config)
+
+        db.commit()
+        return {"message": "Configuración guardada correctamente"}
+
+    except Exception as e:
+        db.rollback()
+        logger.exception(f"Error guardando configuración: {e}")
+        raise HTTPException(status_code=500, detail="Error guardando configuración")

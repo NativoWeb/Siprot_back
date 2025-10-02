@@ -46,14 +46,13 @@ def create_program(
 
 # 📂 Carga masiva de programas desde CSV/Excel
 @router.post("/bulk-upload")
-def bulk_upload_programs(
+def bulk_upload_demand_indicators(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["planeacion", "superadmin"]))
 ):
     """
-    Procesa un archivo CSV o Excel para crear múltiples programas.
-    Valida el formato y las columnas requeridas antes de guardar.
+    Procesa un archivo CSV o Excel para crear múltiples registros de DemandIndicator.
     """
     allowed_types = [
         "text/csv",
@@ -75,8 +74,8 @@ def bulk_upload_programs(
         else:
             df = pd.read_excel(io.BytesIO(contents))
         
-        required_columns = ["code", "name", "sector", "level", "core_line", "program_date"]
-        optional_columns = ["capacity", "region", "description", "current_students"]
+        required_columns = ["sector", "year", "demand_value"]
+        optional_columns = ["indicator_value", "source_document_id"]
         
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
@@ -88,99 +87,75 @@ def bulk_upload_programs(
         if df.empty:
             raise HTTPException(status_code=400, detail="El archivo está vacío o no contiene datos válidos")
         
-        created_programs = []
+        created_records = []
         errors = []
         
         for index, row in df.iterrows():
             try:
-                # Validar campos requeridos
-                for col in required_columns:
-                    if pd.isna(row[col]) or str(row[col]).strip() == "":
-                        errors.append(f"Fila {index + 2}: Campo '{col}' es requerido")
-                        continue
-                
-                # Validar duplicados por código
-                existing_program = db.query(Program).filter(Program.code == str(row["code"]).strip()).first()
-                if existing_program:
-                    errors.append(f"Fila {index + 2}: El código '{row['code']}' ya existe")
+                # Validar sector
+                if pd.isna(row["sector"]) or str(row["sector"]).strip() == "":
+                    errors.append(f"Fila {index + 2}: Campo 'sector' es requerido")
                     continue
                 
-                # Crear diccionario base
-                program_data = {
-                    "code": str(row["code"]).strip(),
-                    "name": str(row["name"]).strip(),
-                    "sector": str(row["sector"]).strip(),
-                    "level": str(row["level"]).strip(),
-                    "core_line": str(row["core_line"]).strip(),
-                    "created_by": current_user.id,
-                }
+                # Validar año
+                if pd.isna(row["year"]):
+                    errors.append(f"Fila {index + 2}: Campo 'year' es requerido")
+                    continue
+                try:
+                    year = int(row["year"])
+                except ValueError:
+                    errors.append(f"Fila {index + 2}: 'year' debe ser un número entero")
+                    continue
+                
+                # Validar demand_value
+                if pd.isna(row["demand_value"]):
+                    errors.append(f"Fila {index + 2}: Campo 'demand_value' es requerido")
+                    continue
+                try:
+                    demand_value = float(row["demand_value"])
+                except ValueError:
+                    errors.append(f"Fila {index + 2}: 'demand_value' debe ser numérico")
+                    continue
 
-                # Procesar fecha de creación (program_date)
-                if not pd.isna(row["program_date"]):
-                    try:
-                        program_data["program_date"] = pd.to_datetime(
-                            row["program_date"], errors="raise"
-                        ).to_pydatetime()
-                    except Exception:
-                        errors.append(
-                            f"Fila {index + 2}: 'program_date' tiene un formato inválido. Usa YYYY-MM-DD"
-                        )
-                        continue
-                else:
-                    errors.append(f"Fila {index + 2}: 'program_date' es requerido")
-                    continue
+                demand_data = {
+                    "sector": str(row["sector"]).strip(),
+                    "year": year,
+                    "demand_value": demand_value,
+                }
                 
-                # Campos opcionales
-                if "capacity" in df.columns and not pd.isna(row["capacity"]):
+                if "indicator_value" in df.columns and not pd.isna(row["indicator_value"]):
                     try:
-                        program_data["capacity"] = int(row["capacity"])
-                    except (ValueError, TypeError):
-                        errors.append(f"Fila {index + 2}: 'capacity' debe ser un número entero")
+                        demand_data["indicator_value"] = float(row["indicator_value"])
+                    except ValueError:
+                        errors.append(f"Fila {index + 2}: 'indicator_value' debe ser numérico")
                         continue
                 
-                if "current_students" in df.columns and not pd.isna(row["current_students"]):
+                if "source_document_id" in df.columns and not pd.isna(row["source_document_id"]):
                     try:
-                        program_data["current_students"] = int(row["current_students"])
-                    except (ValueError, TypeError):
-                        errors.append(f"Fila {index + 2}: 'current_students' debe ser un número entero")
+                        demand_data["source_document_id"] = int(row["source_document_id"])
+                    except ValueError:
+                        errors.append(f"Fila {index + 2}: 'source_document_id' debe ser entero")
                         continue
-                
-                if "region" in df.columns and not pd.isna(row["region"]):
-                    program_data["region"] = str(row["region"]).strip()
-                
-                if "description" in df.columns and not pd.isna(row["description"]):
-                    program_data["description"] = str(row["description"]).strip()
-                
-                # Guardar programa
-                program = Program(**program_data)
-                db.add(program)
-                created_programs.append(program_data["code"])
+
+                # Crear registro
+                indicator = DemandIndicator(**demand_data)
+                db.add(indicator)
+                created_records.append(f"{demand_data['sector']} - {demand_data['year']}")
             
             except Exception as e:
                 errors.append(f"Fila {index + 2}: Error procesando datos - {str(e)}")
         
-        if created_programs:
+        if created_records:
             db.commit()
         
-        if created_programs and not errors:
-            message = f"✅ Se crearon {len(created_programs)} programas exitosamente"
-        elif created_programs and errors:
-            message = f"⚠️ Se crearon {len(created_programs)} programas. {len(errors)} filas tuvieron errores"
-        else:
-            message = f"❌ No se pudo crear ningún programa. {len(errors)} errores encontrados"
-        
         return {
-            "message": message,
-            "created_count": len(created_programs),
+            "message": f"Se cargaron {len(created_records)} indicadores. {len(errors)} errores encontrados",
+            "created_count": len(created_records),
             "error_count": len(errors),
-            "created_programs": created_programs,
+            "created_indicators": created_records,
             "errors": errors[:10],
         }
     
-    except pd.errors.EmptyDataError:
-        raise HTTPException(status_code=400, detail="El archivo está vacío")
-    except pd.errors.ParserError:
-        raise HTTPException(status_code=400, detail="Error al leer el archivo. Verifique el formato")
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error procesando archivo: {str(e)}")

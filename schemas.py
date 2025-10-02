@@ -482,8 +482,9 @@ class DocumentTypeResponse(BaseModel):
 class DemandIndicatorCreate(BaseModel):
     sector: str
     year: int
-    demand_value: float
-    source: Optional[str] = None
+    demand_value: Optional[float] = None
+    indicator_value: Optional[float] = None
+    source_document_id: Optional[int] = None
 
     class Config:
-        from_attributes = True
+        orm_mode = True

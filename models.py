@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, Integer, String, Float, Text, Boolean, DateTime,
-    func, ForeignKey, LargeBinary, JSON
+    func, ForeignKey, LargeBinary, JSON, Numeric
 )
 from sqlalchemy.orm import relationship
 from database import Base
@@ -113,19 +113,13 @@ class Program(Base):
 class DemandIndicator(Base):
     __tablename__ = "demand_indicators"
 
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, index=True)
     sector = Column(String, nullable=False)
     year = Column(Integer, nullable=False)
-    demand_value = Column(Float)
-    source = Column(String)
+    demand_value = Column(Numeric(10,2))
+    indicator_value = Column(Float)   # 🔹 Este existe en la tabla
     source_document_id = Column(Integer, ForeignKey("documents.id"), nullable=True)
-    notes = Column(Text)
-    created_by = Column(Integer, ForeignKey("users.id"))
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    document = relationship("Document")
-    creator = relationship("User")
 
 
 class ProjectionSetting(Base):
