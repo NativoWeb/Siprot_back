@@ -13,6 +13,8 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT, TA_JUSTIFY
 from reportlab.graphics.shapes import Drawing, Rect, String, Circle
 from reportlab.graphics.charts.piecharts import Pie
 from reportlab.graphics.charts.barcharts import VerticalBarChart
+from reportlab.graphics.charts.linecharts import HorizontalLineChart
+from reportlab.graphics.widgets.markers import makeMarker
 from reportlab.graphics import renderPDF
 from reportlab.pdfgen import canvas
 from schemas import TipoReporte, ParametrosReporte
@@ -256,6 +258,199 @@ class PDFService:
         
         return []
 
+    def _filtrar_proyecciones_relevantes(self, proyecciones: List[Dict], max_años: int = 5) -> List[Dict]:
+        """
+        Filtra proyecciones para mostrar solo las más relevantes
+        - Próximos N años
+        - Indicadores principales (demanda, población, empleo)
+        """
+        año_actual = datetime.now().year
+        
+        proyecciones_filtradas = []
+        
+        for p in proyecciones:
+            año = p.get('año', 0)
+            
+            # Solo proyecciones futuras dentro del rango
+            if año < año_actual or año > año_actual + max_años:
+                continue
+            
+            # Simplificar estructura: extraer solo indicadores clave
+            p_simplificada = {
+                'año': año,
+                'sector': p.get('sector', 'General')
+            }
+            
+            # Buscar indicadores prioritarios
+            indicadores_prioritarios = [
+                'demanda', 'poblacion', 'estudiantes', 'empleo', 
+                'matricula', 'oferta', 'graduados', 'egresados'
+            ]
+            
+            # Si tiene valor_proyectado directo
+            if 'valor_proyectado' in p:
+                p_simplificada['valor'] = p['valor_proyectado']
+                p_simplificada['indicador'] = p.get('tipo_indicador', 'Proyección')
+            else:
+                # Buscar en todos los campos
+                for key, val in p.items():
+                    if isinstance(val, (int, float)):
+                        key_lower = str(key).lower()
+                        for ind_prior in indicadores_prioritarios:
+                            if ind_prior in key_lower:
+                                p_simplificada['valor'] = val
+                                p_simplificada['indicador'] = key
+                                break
+                        if 'valor' in p_simplificada:
+                            break
+            
+            if 'valor' in p_simplificada:
+                proyecciones_filtradas.append(p_simplificada)
+        
+        return proyecciones_filtradas
+
+    def _crear_grafica_escenarios(self, escenarios_data: List[Dict]) -> Drawing:
+        """
+        Crea gráfica de líneas con proyecciones de múltiples escenarios
+        Filtra y muestra solo los datos más relevantes
+        """
+        try:
+            if not escenarios_data:
+                return None
+            
+            # Extraer años y preparar datos
+            todos_años = set()
+            series_data = {}
+            
+            for escenario in escenarios_data[:3]:  # Máximo 3 escenarios para claridad
+                nombre = escenario.get('nombre', 'Escenario')
+                proyecciones = escenario.get('proyecciones', [])
+                
+                if not proyecciones:
+                    continue
+                
+                # Filtrar proyecciones: solo las de los próximos 5 años
+                año_actual = datetime.now().year
+                proyecciones_filtradas = [
+                    p for p in proyecciones 
+                    if p.get('año', 0) >= año_actual and p.get('año', 0) <= año_actual + 5
+                ]
+                
+                if not proyecciones_filtradas:
+                    continue
+                
+                # Obtener indicador principal (el primero con mayor valor promedio)
+                for p in proyecciones_filtradas:
+                    año = p.get('año')
+                    todos_años.add(año)
+                    
+                    # Si tiene valor_proyectado directo, usarlo
+                    if 'valor_proyectado' in p:
+                        if nombre not in series_data:
+                            series_data[nombre] = {}
+                        series_data[nombre][año] = p['valor_proyectado']
+                    # Si ya lo simplificamos con 'valor'
+                    elif 'valor' in p:
+                        if nombre not in series_data:
+                            series_data[nombre] = {}
+                        series_data[nombre][año] = p['valor']
+            
+            if not series_data or not todos_años:
+                return None
+            
+            # Preparar datos para la gráfica
+            años_ordenados = sorted(list(todos_años))
+            
+            # Crear Drawing
+            drawing = Drawing(480, 250)
+            
+            # Crear gráfica de líneas
+            lc = HorizontalLineChart()
+            lc.x = 50
+            lc.y = 50
+            lc.width = 380
+            lc.height = 150
+            
+            # Configurar ejes
+            lc.categoryAxis.categoryNames = [str(año) for año in años_ordenados]
+            lc.categoryAxis.labels.angle = 45
+            lc.categoryAxis.labels.fontSize = 8
+            lc.categoryAxis.labels.dx = -5
+            
+            lc.valueAxis.valueMin = 0
+            lc.valueAxis.valueStep = None  # Auto
+            lc.valueAxis.labels.fontSize = 8
+            
+            # Preparar series de datos
+            data = []
+            colores_escenarios = {
+                'optimista': self.institutional_colors["success"],
+                'tendencial': self.institutional_colors["primary"],
+                'pesimista': self.institutional_colors["danger"],
+                'conservador': self.institutional_colors["secondary"]
+            }
+            
+            nombres_series = []
+            for idx, (nombre, valores_año) in enumerate(series_data.items()):
+                serie = []
+                for año in años_ordenados:
+                    serie.append(valores_año.get(año, None))
+                data.append(serie)
+                nombres_series.append(nombre)
+                
+                # Configurar estilo de línea
+                tipo_escenario = nombre.lower()
+                color = None
+                for tipo_key in colores_escenarios.keys():
+                    if tipo_key in tipo_escenario:
+                        color = colores_escenarios[tipo_key]
+                        break
+                if not color:
+                    color = self.institutional_colors.get("accent", HexColor('#3B82F6'))
+                
+                lc.lines[idx].strokeColor = color
+                lc.lines[idx].strokeWidth = 2.5
+                lc.lines[idx].symbol = makeMarker('FilledCircle')
+                lc.lines[idx].symbol.size = 4
+                lc.lines[idx].symbol.strokeColor = color
+                lc.lines[idx].symbol.fillColor = color
+            
+            lc.data = data
+            
+            # Agregar leyenda
+            legend_y = 220
+            legend_x = 50
+            
+            for idx, nombre in enumerate(nombres_series):
+                # Determinar color
+                tipo_escenario = nombre.lower()
+                color = self.institutional_colors.get("primary", HexColor('#3B82F6'))
+                for tipo_key, tipo_color in colores_escenarios.items():
+                    if tipo_key in tipo_escenario:
+                        color = tipo_color
+                        break
+                
+                # Dibujar indicador de color
+                drawing.add(Rect(legend_x + (idx * 150), legend_y, 20, 3, 
+                               fillColor=color, strokeColor=color))
+                
+                # Texto de leyenda
+                texto_nombre = nombre[:20] + '...' if len(nombre) > 20 else nombre
+                drawing.add(String(legend_x + (idx * 150) + 25, legend_y - 2, 
+                                 texto_nombre, fontSize=9, fillColor=black))
+            
+            # Título
+            drawing.add(String(50, 235, 'Proyecciones de Escenarios (Próximos 5 años)', 
+                             fontSize=12, fillColor=self.institutional_colors["primary"], 
+                             fontName='Helvetica-Bold'))
+            
+            drawing.add(lc)
+            return drawing
+            
+        except Exception as e:
+            logger.error(f"Error creando gráfica de escenarios: {e}")
+            return None
+
     def _generar_reporte_consolidado_completo(self, datos: Dict[str, Any], parametros, reporte_id: int) -> List:
         """
         Genera reporte consolidado completo con todos los elementos requeridos
@@ -288,11 +483,10 @@ class PDFService:
         story.append(tabla_portada)
         story.append(PageBreak())
         
-        # 2. TABLA DE CONTENIDO MEJORADA (sin usar Table)
+        # 2. TABLA DE CONTENIDO MEJORADA
         story.append(Paragraph("Tabla de Contenido", self.styles['SectionTitle']))
         story.append(Spacer(1, 20))
         
-        # Usar párrafos en lugar de tabla
         secciones_contenido = [
             ("1. Resumen Ejecutivo", 3),
             ("2. Análisis DOFA", 4),
@@ -316,7 +510,6 @@ class PDFService:
         )
         
         for seccion, pagina in secciones_contenido:
-            # Detectar nivel de indentación
             indent = 0
             if seccion.startswith("   "):
                 indent = 30
@@ -333,7 +526,7 @@ class PDFService:
         
         story.append(PageBreak())
         
-        # 3. RESUMEN EJECUTIVO (inicio claro de sección)
+        # 3. RESUMEN EJECUTIVO
         story.append(Paragraph("1. Resumen Ejecutivo", self.styles['SectionTitle']))
         story.append(Spacer(1, 15))
         
@@ -385,7 +578,7 @@ class PDFService:
         
         story.append(PageBreak())
         
-        # 6. ANÁLISIS PROSPECTIVO (inicio claro de sección con subsecciones)
+        # 6. ANÁLISIS PROSPECTIVO (CON GRÁFICAS MEJORADAS)
         story.append(Paragraph("4. Análisis Prospectivo", self.styles['SectionTitle']))
         story.append(Spacer(1, 15))
         
@@ -435,7 +628,6 @@ class PDFService:
             if items:
                 story.append(Paragraph(titulo, self.styles['SubsectionTitle']))
                 
-                # Crear tabla para los items
                 items_data = [['#', 'Descripción']]
                 for i, item in enumerate(items[:10], 1):
                     texto = item.get("texto", item) if isinstance(item, dict) else str(item)
@@ -458,18 +650,15 @@ class PDFService:
 
     def _agregar_seccion_indicadores(self, story: List, indicadores: Dict[str, Any]):
         """Agrega sección de indicadores estratégicos"""
-        # Resumen de indicadores
         resumen = indicadores.get("resumen", {})
         if resumen:
             story.append(Paragraph("Resumen de Desempeño", self.styles['SubsectionTitle']))
             
-            # Crear gráfico de semáforo si es posible
             grafico_semaforo = self._crear_grafico_semaforo_mejorado(resumen)
             if grafico_semaforo:
                 story.append(grafico_semaforo)
                 story.append(Spacer(1, 20))
             
-            # Tabla resumen
             resumen_data = [
                 ['Métrica', 'Valor'],
                 ['Total de Indicadores', str(resumen.get('total_indicadores', 0))],
@@ -535,7 +724,7 @@ class PDFService:
 
     def _agregar_seccion_escenarios_mejorada(self, story: List, escenarios: Dict[str, Any]):
         """
-        Agrega sección de análisis prospectivo MEJORADA con mejor organización
+        VERSIÓN MEJORADA con gráficas de proyecciones
         """
         prospectiva = escenarios.get("prospectiva", escenarios)
         lista_escenarios = prospectiva.get("escenarios", [])
@@ -567,14 +756,53 @@ class PDFService:
             story.append(tabla_resumen)
             story.append(Spacer(1, 20))
         
-        # 4.1. Escenarios Prospectivos
+        # *** NUEVA SECCIÓN: GRÁFICA COMPARATIVA DE TODOS LOS ESCENARIOS ***
+        if lista_escenarios and len(lista_escenarios) > 1:
+            story.append(Paragraph("Comparación Visual de Escenarios", self.styles['SubsectionTitle']))
+            story.append(Spacer(1, 10))
+            
+            # Preparar datos para gráfica
+            escenarios_para_grafica = []
+            for escenario in lista_escenarios:
+                proyecciones = escenario.get('proyecciones', [])
+                if proyecciones:
+                    # Filtrar proyecciones relevantes
+                    proyecciones_filtradas = self._filtrar_proyecciones_relevantes(proyecciones, max_años=5)
+                    
+                    escenarios_para_grafica.append({
+                        'nombre': escenario.get('nombre', 'Escenario'),
+                        'tipo': escenario.get('tipo', ''),
+                        'proyecciones': proyecciones_filtradas
+                    })
+            
+            # Crear y agregar gráfica
+            if escenarios_para_grafica:
+                grafica = self._crear_grafica_escenarios(escenarios_para_grafica)
+                if grafica:
+                    story.append(grafica)
+                    story.append(Spacer(1, 15))
+                    
+                    # Nota explicativa
+                    nota = Paragraph(
+                        "<i>Nota: La gráfica muestra las proyecciones de los próximos 5 años para el indicador principal de cada escenario.</i>",
+                        ParagraphStyle(
+                            'NotaGrafica',
+                            parent=self.styles['Normal'],
+                            fontSize=8,
+                            textColor=HexColor('#6b7280'),
+                            alignment=TA_CENTER
+                        )
+                    )
+                    story.append(nota)
+                    story.append(Spacer(1, 20))
+        
+        # 4.1. Escenarios Prospectivos (detalle individual)
         if lista_escenarios:
             story.append(Paragraph("4.1. Escenarios Prospectivos", self.styles['SubsectionTitle']))
             story.append(Spacer(1, 10))
             
-            # Procesar cada escenario de forma organizada
+            # Procesar cada escenario
             for i, escenario in enumerate(lista_escenarios, 1):
-                # Encabezado del escenario
                 tipo_info = escenario.get("tipo_clasificado", {})
                 nombre_completo = f"Escenario {i}: {escenario.get('nombre', 'Sin nombre')}"
                 
@@ -607,7 +835,22 @@ class PDFService:
                 story.append(tabla_info)
                 story.append(Spacer(1, 10))
                 
-                # Métricas clave del escenario (si existen)
+                # *** GRÁFICA INDIVIDUAL DEL ESCENARIO ***
+                proyecciones = escenario.get('proyecciones', [])
+                if proyecciones:
+                    proyecciones_filtradas = self._filtrar_proyecciones_relevantes(proyecciones, max_años=5)
+                    
+                    if proyecciones_filtradas:
+                        grafica_individual = self._crear_grafica_escenarios([{
+                            'nombre': escenario.get('nombre', 'Escenario'),
+                            'proyecciones': proyecciones_filtradas
+                        }])
+                        
+                        if grafica_individual:
+                            story.append(grafica_individual)
+                            story.append(Spacer(1, 10))
+                
+                # Métricas clave
                 metricas_clave = escenario.get('metricas_clave', [])
                 if metricas_clave:
                     story.append(Paragraph("Métricas Clave", ParagraphStyle(
@@ -619,7 +862,7 @@ class PDFService:
                     )))
                     
                     metricas_data = [['Parámetro', 'Valor']]
-                    for metrica in metricas_clave[:5]:  # Máximo 5 métricas
+                    for metrica in metricas_clave[:5]:
                         metricas_data.append([
                             metrica.get('parametro', 'N/A'),
                             str(metrica.get('valor', 'N/A'))
@@ -639,28 +882,27 @@ class PDFService:
                     story.append(tabla_metricas)
                     story.append(Spacer(1, 10))
                 
-                # Resumen por sectores (formato mejorado)
-                resumen_sectores = escenario.get('resumen_sectores', {})
-                if resumen_sectores:
-                    story.append(Paragraph("Proyecciones por Sector", ParagraphStyle(
-                        'SectorTitle',
+                # Tabla simplificada de proyecciones más relevantes
+                if proyecciones_filtradas and len(proyecciones_filtradas) > 0:
+                    story.append(Paragraph("Proyecciones Clave", ParagraphStyle(
+                        'ProyeccionesTitle',
                         parent=self.styles['Normal'],
                         fontSize=10,
                         fontName='Helvetica-Bold',
                         textColor=self.institutional_colors["primary"]
                     )))
                     
-                    sectores_data = [['Sector', 'Proyecciones', 'Años', 'Crecimiento Promedio']]
-                    for sector, info in resumen_sectores.items():
-                        sectores_data.append([
-                            sector,
-                            str(info.get('total_proyecciones', 0)),
-                            ', '.join(map(str, info.get('años', []))),
-                            f"{info.get('crecimiento_promedio', 0)}%"
+                    proy_data = [['Año', 'Sector', 'Indicador', 'Valor Proyectado']]
+                    for p in proyecciones_filtradas[:10]:  # Máximo 10 filas
+                        proy_data.append([
+                            str(p.get('año', '')),
+                            p.get('sector', 'General'),
+                            p.get('indicador', 'Proyección')[:25],  # Limitar longitud
+                            f"{p.get('valor', 0):,.0f}"
                         ])
                     
-                    tabla_sectores = Table(sectores_data, colWidths=[1.5*inch, 1*inch, 1.5*inch, 1*inch])
-                    tabla_sectores.setStyle(TableStyle([
+                    tabla_proy = Table(proy_data, colWidths=[0.8*inch, 1.5*inch, 1.5*inch, 1.2*inch])
+                    tabla_proy.setStyle(TableStyle([
                         ('BACKGROUND', (0, 0), (-1, 0), self.institutional_colors["secondary"]),
                         ('TEXTCOLOR', (0, 0), (-1, 0), white),
                         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
@@ -671,7 +913,7 @@ class PDFService:
                         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [white, HexColor('#F0F0F0')])
                     ]))
                     
-                    story.append(tabla_sectores)
+                    story.append(tabla_proy)
                 
                 story.append(Spacer(1, 15))
                 
@@ -971,7 +1213,6 @@ class PDFService:
         except Exception as e:
             logger.error(f"Error creando gráfico de semáforo: {e}")
             return None
-
     
     def _crear_grafico_semaforo(self, resumen: Dict[str, Any]) -> Drawing:
         """Crea un gráfico de pastel para el semáforo de indicadores"""
@@ -1021,7 +1262,7 @@ class PDFService:
             return drawing
         
         except Exception as e:
-            print(f"Error creando gráfico: {e}")
+            logger.error(f"Error creando gráfico: {e}")
             return None
     
     def _get_color_semaforo(self, estado: str) -> HexColor:
@@ -1031,7 +1272,6 @@ class PDFService:
             'amarillo': HexColor('#ffc107'),
             'rojo': HexColor('#dc3545')
         }
-
         return colores.get(estado.lower(), HexColor('#6c757d'))
 
     def _process_prospective_report_data(self, datos: Dict[str, Any], parametros: ParametrosReporte) -> Dict[str, Any]:
@@ -1044,18 +1284,18 @@ class PDFService:
         
         for escenario in escenarios:
             # Normalizar parámetros
-            parametros = escenario.get("parametros", {}) 
-            if isinstance(parametros, str):
+            parametros_esc = escenario.get("parametros", {}) 
+            if isinstance(parametros_esc, str):
                 try:
-                    parametros = json.loads(parametros)
+                    parametros_esc = json.loads(parametros_esc)
                 except:
-                    parametros = {"raw": parametros}
+                    parametros_esc = {"raw": parametros_esc}
             
             escenario_procesado = {
                 "nombre": escenario.get("nombre", "Escenario sin nombre"),
                 "tipo": escenario.get("tipo", "No especificado"),
                 "descripcion": escenario.get("descripcion", "Sin descripción disponible"),
-                "parametros": parametros
+                "parametros": parametros_esc
             }
             escenarios_procesados.append(escenario_procesado)
         
