@@ -413,7 +413,6 @@ class ScenarioConfiguration(Base):
     scenario_type = Column(String(20), nullable=False)
     parameter_name = Column(String(100), nullable=False)
     parameter_value = Column(Float, nullable=False)
-    description = Column(Text, nullable=True)
     updated_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

@@ -47,7 +47,6 @@ def sanitize_projection_data(projections: List[Dict]) -> List[Dict]:
             'values': {}
         }
         
-        # Sanitizar todos los valores dentro de 'values'
         values = proj.get('values', {})
         if isinstance(values, dict):
             for key, val in values.items():
@@ -56,6 +55,60 @@ def sanitize_projection_data(projections: List[Dict]) -> List[Dict]:
         sanitized.append(sanitized_proj)
     
     return sanitized
+
+
+def save_scenario_parameters_to_config(
+    db: Session, 
+    scenario_type: str, 
+    parameters: Dict[str, float], 
+    user_id: int
+):
+    """
+    Guarda los parámetros personalizados en la tabla scenario_configurations
+    """
+    try:
+        for param_name, param_value in parameters.items():
+            config = db.query(ScenarioConfiguration).filter(
+                ScenarioConfiguration.scenario_type == scenario_type,
+                ScenarioConfiguration.parameter_name == param_name
+            ).first()
+
+            if config:
+                config.parameter_value = float(param_value)
+                config.updated_by = user_id
+            else:
+                config = ScenarioConfiguration(
+                    scenario_type=scenario_type,
+                    parameter_name=param_name,
+                    parameter_value=float(param_value),
+                    updated_by=user_id
+                )
+                db.add(config)
+        
+        db.flush()
+        logger.info(f"Parámetros guardados en scenario_configurations para {scenario_type}")
+        
+    except Exception as e:
+        logger.error(f"Error guardando configuración en BD: {e}")
+        raise
+
+
+def load_scenario_parameters_from_config(db: Session, scenario_type: str) -> Dict[str, float]:
+    """
+    Carga los parámetros desde la tabla scenario_configurations
+    """
+    try:
+        configs = db.query(ScenarioConfiguration).filter(
+            ScenarioConfiguration.scenario_type == scenario_type
+        ).all()
+        
+        if configs:
+            return {config.parameter_name: config.parameter_value for config in configs}
+        return {}
+        
+    except Exception as e:
+        logger.error(f"Error cargando configuración desde BD: {e}")
+        return {}
 
 
 class ScenarioGenerationRequest(BaseModel):
@@ -68,10 +121,8 @@ class ScenarioGenerationRequest(BaseModel):
 def read_flexible_file(file_path: str, extension: str) -> pd.DataFrame:
     """
     Lee CSV o XLSX intentando detectar encoding y separador en CSV.
-    Lanza ValueError si no puede leer o si el DataFrame es inválido.
     """
     if extension.lower() == ".csv":
-        # Detect encoding
         with open(file_path, "rb") as f:
             sample = f.read(100000)
             result = chardet.detect(sample)
@@ -79,7 +130,6 @@ def read_flexible_file(file_path: str, extension: str) -> pd.DataFrame:
 
         separators = [";", ",", "\t", "|"]
         df = None
-        last_exception = None
 
         for sep in separators:
             try:
@@ -88,30 +138,25 @@ def read_flexible_file(file_path: str, extension: str) -> pd.DataFrame:
                     df = df_try
                     logger.debug(f"CSV leído con encoding={detected_encoding}, sep='{sep}'")
                     break
-            except Exception as e:
-                last_exception = e
+            except Exception:
                 continue
 
         if df is None:
             try:
                 df = pd.read_csv(file_path, encoding=detected_encoding)
             except Exception as e:
-                raise ValueError(f"No se pudo leer CSV - probar separador/encoding. Error: {e}") from e
-
+                raise ValueError(f"No se pudo leer CSV: {e}") from e
     else:
-        # Excel
         try:
             df = pd.read_excel(file_path)
         except Exception as e:
             raise ValueError(f"No se pudo leer XLSX: {e}") from e
 
     if df is None or df.empty or df.shape[1] == 1:
-        raise ValueError("No se pudo leer el archivo correctamente (verifique el separador y formato)")
+        raise ValueError("Archivo inválido o vacío")
 
-    # Limpieza y normalización de columnas
     df.columns = df.columns.astype(str).str.strip()
 
-    # Normalizar texto y convertir números donde sea posible
     for col in df.columns:
         if df[col].dtype == object:
             df[col] = (
@@ -168,18 +213,18 @@ def generate_scenarios_from_csv(
 ):
     """
     Genera escenarios prospectivos basados en un archivo CSV/XLSX.
-    Guarda las proyecciones en la tabla `scenario_projections`.
+    Guarda las proyecciones Y los parámetros personalizados en BD.
     """
     scenario_types = request.scenario_types
     years_ahead = request.years_ahead
     custom_params = request.parameters or {}
 
-    logger.info(f"Parametros personalizados recibidos: {custom_params}")
+    logger.info(f"Parámetros personalizados recibidos: {custom_params}")
 
     allowed_types = {"tendencial", "optimista", "pesimista"}
     bad_types = [t for t in scenario_types if t not in allowed_types]
     if bad_types:
-        raise HTTPException(status_code=400, detail=f"Tipo(s) de escenario invalido(s): {bad_types}")
+        raise HTTPException(status_code=400, detail=f"Tipo(s) inválido(s): {bad_types}")
 
     try:
         document = db.query(Document).filter(Document.id == document_id).first()
@@ -188,20 +233,17 @@ def generate_scenarios_from_csv(
 
         ext = (document.file_extension or "").lower()
         if ext not in ['.csv', '.xlsx']:
-            raise HTTPException(status_code=400, detail="El archivo debe ser CSV o XLSX")
+            raise HTTPException(status_code=400, detail="Debe ser CSV o XLSX")
 
         file_path = os.path.abspath(document.file_path)
         if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail="Archivo no encontrado en el servidor")
+            raise HTTPException(status_code=404, detail="Archivo no encontrado")
 
         try:
             df = read_flexible_file(file_path, ext)
         except Exception as e:
             logger.exception("Error leyendo archivo")
-            raise HTTPException(
-                status_code=400,
-                detail=f"Error al leer el archivo: {str(e)}"
-            )
+            raise HTTPException(status_code=400, detail=f"Error leyendo archivo: {str(e)}")
 
         engine = ScenarioEngine(db)
         scenarios_data = {}
@@ -236,7 +278,16 @@ def generate_scenarios_from_csv(
                         scenario.parameters["custom_parameters"] = custom_params
                         db.commit()
 
-                # Generar proyecciones con parametros personalizados
+                # NUEVO: Guardar parámetros en scenario_configurations
+                if custom_params:
+                    save_scenario_parameters_to_config(
+                        db, 
+                        scenario_type, 
+                        custom_params, 
+                        current_user.id
+                    )
+                    db.commit()
+
                 projections = engine.generate_scenario_projections(
                     scenario.id, 
                     df, 
@@ -245,13 +296,11 @@ def generate_scenarios_from_csv(
                 )
 
                 if not isinstance(projections, list):
-                    logger.warning(f"Projections for scenario {scenario.id} is not a list; skipping")
+                    logger.warning(f"Projections for {scenario.id} is not a list")
                     projections = []
                 
-                # Sanitizar proyecciones para evitar valores inf/nan
                 projections = sanitize_projection_data(projections)
 
-                # Guardar proyecciones en BD
                 try:
                     deleted = db.query(ScenarioProjection).filter(
                         ScenarioProjection.scenario_id == scenario.id
@@ -310,7 +359,7 @@ def generate_scenarios_from_csv(
                     "scenario_name": scenario.name,
                     "description": scenario.description,
                     "color": get_scenario_color(scenario_type),
-                    "data": projections,  # Ya sanitizadas
+                    "data": projections,
                     "parameters": scenario.parameters,
                     "source_document": {
                         "id": document.id,
@@ -328,18 +377,17 @@ def generate_scenarios_from_csv(
                 logger.info(f"Escenario {scenario_type} generado con {len(projections)} puntos")
                 
             except Exception as e:
-                logger.exception(f"Error generando escenario {scenario_type}: {e}")
+                logger.exception(f"Error generando {scenario_type}: {e}")
                 continue
 
         if not scenarios_data:
             raise HTTPException(status_code=500, detail="No se pudieron generar escenarios")
 
-        # Validar que la respuesta sea JSON-serializable antes de devolverla
         try:
             json.dumps(scenarios_data)
         except (ValueError, TypeError) as e:
-            logger.error(f"Error serializando respuesta a JSON: {e}")
-            raise HTTPException(status_code=500, detail="Error en formato de datos generados")
+            logger.error(f"Error serializando JSON: {e}")
+            raise HTTPException(status_code=500, detail="Error en formato de datos")
 
         return scenarios_data
 
@@ -350,17 +398,68 @@ def generate_scenarios_from_csv(
         raise HTTPException(status_code=500, detail=f"Error interno: {str(e)}")
 
 
+@router.get("/configurations/{scenario_type}")
+def get_scenario_configuration(
+    scenario_type: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["planeacion", "administrativo", "instructor"]))
+):
+    """
+    Obtiene los parámetros guardados para un tipo de escenario
+    """
+    try:
+        parameters = load_scenario_parameters_from_config(db, scenario_type)
+        
+        return {
+            "scenario_type": scenario_type,
+            "parameters": parameters
+        }
+    except Exception as e:
+        logger.exception(f"Error obteniendo configuración: {e}")
+        raise HTTPException(status_code=500, detail="Error obteniendo configuración")
+
+
+@router.post("/configurations/set")
+def set_scenario_configuration(
+    request: ScenarioConfigurationUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["superadmin", "planeacion"]))
+):
+    """
+    Crea o actualiza los parámetros de un tipo de escenario
+    """
+    try:
+        save_scenario_parameters_to_config(
+            db, 
+            request.scenario_type.value, 
+            request.parameters, 
+            current_user.id
+        )
+        db.commit()
+        
+        return {
+            "message": "Configuración guardada correctamente",
+            "scenario_type": request.scenario_type.value,
+            "parameters": request.parameters
+        }
+
+    except Exception as e:
+        db.rollback()
+        logger.exception(f"Error guardando configuración: {e}")
+        raise HTTPException(status_code=500, detail="Error guardando configuración")
+
+
 @router.get("/compare")
 def compare_scenarios(
     scenario_ids: List[int],
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["planeacion", "administrativo", "instructor"]))
 ):
-    """Compara multiples escenarios lado a lado"""
+    """Compara múltiples escenarios lado a lado"""
     try:
         scenarios = db.query(Scenario).filter(Scenario.id.in_(scenario_ids)).all()
         if len(scenarios) != len(scenario_ids):
-            raise HTTPException(status_code=404, detail="Algunos escenarios no fueron encontrados")
+            raise HTTPException(status_code=404, detail="Algunos escenarios no encontrados")
 
         comparison_data = []
         for scenario in scenarios:
@@ -381,7 +480,7 @@ def compare_scenarios(
         }
     except Exception as e:
         logger.exception("Error comparando escenarios")
-        raise HTTPException(status_code=500, detail="Error al comparar escenarios")
+        raise HTTPException(status_code=500, detail="Error comparando escenarios")
 
 
 @router.get("/list", response_model=List[Dict])
@@ -434,7 +533,7 @@ def list_existing_scenarios(
         logger.exception("Error listando escenarios")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error al obtener la lista de escenarios"
+            detail="Error obteniendo lista de escenarios"
         )
 
 
@@ -444,7 +543,7 @@ def get_scenario_details(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["planeacion", "administrativo", "instructor"]))
 ):
-    """Obtiene los detalles completos de un escenario especifico"""
+    """Obtiene los detalles completos de un escenario específico"""
     try:
         scenario = db.query(Scenario).filter(
             Scenario.id == scenario_id,
@@ -456,7 +555,6 @@ def get_scenario_details(
 
         creator = db.query(User).filter(User.id == scenario.created_by).first()
 
-        # Obtener proyecciones desde BD
         projections_q = db.query(ScenarioProjection).filter(
             ScenarioProjection.scenario_id == scenario_id
         ).order_by(ScenarioProjection.year.asc()).all()
@@ -472,7 +570,6 @@ def get_scenario_details(
             projections = [by_year[y] for y in sorted(by_year.keys())]
             projections = sanitize_projection_data(projections)
         else:
-            # Si no hay proyecciones guardadas, intentar regenerar
             source_document = None
             if scenario.parameters and 'source_document_id' in scenario.parameters:
                 doc_id = scenario.parameters['source_document_id']
@@ -538,7 +635,7 @@ def get_scenario_details(
         logger.exception(f"Error obteniendo detalles del escenario {scenario_id}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error al obtener detalles del escenario"
+            detail="Error obteniendo detalles del escenario"
         )
 
 
@@ -550,41 +647,3 @@ def get_scenario_color(scenario_type: str) -> str:
         "pesimista": "#EF4444"
     }
     return colors.get(scenario_type, "#6B7280")
-
-@router.post("/configurations/set")
-def set_scenario_configuration(
-    request: ScenarioConfigurationUpdate,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(require_role(["superadmin", "planeacion"]))
-):
-    """
-    Crea o actualiza los parámetros de un tipo de escenario.
-    """
-    try:
-        for param_name, param_value in request.parameters.items():
-            config = db.query(ScenarioConfiguration).filter(
-                ScenarioConfiguration.scenario_type == request.scenario_type.value,
-                ScenarioConfiguration.parameter_name == param_name
-            ).first()
-
-            if config:
-                # Actualizar
-                config.parameter_value = param_value
-                config.updated_by = current_user.id
-            else:
-                # Crear nuevo
-                config = ScenarioConfiguration(
-                    scenario_type=request.scenario_type.value,
-                    parameter_name=param_name,
-                    parameter_value=param_value,
-                    updated_by=current_user.id
-                )
-                db.add(config)
-
-        db.commit()
-        return {"message": "Configuración guardada correctamente"}
-
-    except Exception as e:
-        db.rollback()
-        logger.exception(f"Error guardando configuración: {e}")
-        raise HTTPException(status_code=500, detail="Error guardando configuración")
