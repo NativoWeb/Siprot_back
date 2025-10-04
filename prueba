@@ -5,7 +5,6 @@ from datetime import datetime
 from enum import Enum
 import logging
 import re
-from models import Scenario
 
 logger = logging.getLogger(__name__)
 
@@ -56,44 +55,22 @@ class ScenarioEngine:
             )
         }
     
-    def create_scenario(self, scenario_data: dict, user_id: int) -> Scenario:
-        """
-        Crea un nuevo escenario en la base de datos
-        """
-        try:
-            # <CHANGE> Extraer document_id de los parámetros
-            document_id = None
-            if 'parameters' in scenario_data and isinstance(scenario_data['parameters'], dict):
-                document_id = scenario_data['parameters'].get('source_document_id')
-            elif 'parameters' in scenario_data and isinstance(scenario_data['parameters'], str):
-                import json
-                params = json.loads(scenario_data['parameters'])
-                document_id = params.get('source_document_id')
-            
-            # Si no hay document_id, lanzar error
-            if document_id is None:
-                raise ValueError("document_id es requerido para crear un escenario")
-            
-            scenario = Scenario(
-                name=scenario_data['name'],
-                scenario_type=scenario_data['scenario_type'],
-                description=scenario_data.get('description', ''),
-                parameters=scenario_data.get('parameters', {}),
-                created_by=user_id,
-                document_id=document_id  # <CHANGE> Agregar document_id aquí
-            )
-            
-            self.db.add(scenario)
-            self.db.commit()
-            self.db.refresh(scenario)
-            
-            logger.info(f"Escenario creado: {scenario.name} (ID: {scenario.id})")
-            return scenario
+    def create_scenario(self, scenario_data: Dict, user_id: int):
+        """Crea un nuevo escenario en la base de datos"""
+        from models import Scenario
         
-        except Exception as e:
-            self.db.rollback()  # <CHANGE> Agregar rollback en caso de error
-            logger.error(f"Error creando escenario: {str(e)}")
-            raise
+        scenario = Scenario(
+            name=scenario_data["name"],
+            scenario_type=scenario_data["scenario_type"],
+            description=scenario_data["description"],
+            parameters=scenario_data["parameters"],
+            created_by=user_id
+        )
+        
+        self.db.add(scenario)
+        self.db.commit()
+        self.db.refresh(scenario)
+        return scenario
     
     def generate_scenario_projections(
         self,
@@ -292,7 +269,7 @@ class ScenarioEngine:
     def _get_scenario_config_by_id(self, scenario_id: int) -> ScenarioConfig:
         """Obtiene configuracion del escenario por ID"""
         try:
-            # <CHANGE> Remover "from models import Scenario" de aquí ya que está al inicio
+            from models import Scenario
             scenario = self.db.query(Scenario).filter(Scenario.id == scenario_id).first()
             if scenario and scenario.scenario_type:
                 return self.scenarios[ScenarioType(scenario.scenario_type)]

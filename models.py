@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, Integer, String, Float, Text, Boolean, DateTime,
-    func, ForeignKey, LargeBinary, JSON
+    func, ForeignKey, LargeBinary, JSON, Numeric
 )
 from sqlalchemy.orm import relationship
 from database import Base
@@ -65,6 +65,9 @@ class Document(Base):
     additional_notes = Column(String(500), nullable=True)
     file_path = Column(String(500), nullable=False)
 
+    # NUEVO: tamaño del archivo en bytes
+    file_size = Column(Integer, nullable=True)
+
     uploaded_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     uploaded_at = Column(DateTime(timezone=True), server_default=func.now())
 
@@ -91,10 +94,18 @@ class Program(Base):
     region = Column(String, nullable=True)
     description = Column(String, nullable=True)
 
+    # Fecha real de creación del programa (manual, no ligada al registro en BD)
+    program_date = Column(DateTime, nullable=False)
+
+    # Fechas de auditoría en BD
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    def __repr__(self):
+        return f"<Program(code='{self.code}', name='{self.name}', program_date='{self.program_date}')>"
+
 
 
 # ==================== INDICADORES Y PROYECCIONES ====================
@@ -102,19 +113,13 @@ class Program(Base):
 class DemandIndicator(Base):
     __tablename__ = "demand_indicators"
 
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, index=True)
     sector = Column(String, nullable=False)
     year = Column(Integer, nullable=False)
-    demand_value = Column(Float)
-    source = Column(String)
+    demand_value = Column(Numeric(10,2))
+    indicator_value = Column(Float)   # 🔹 Este existe en la tabla
     source_document_id = Column(Integer, ForeignKey("documents.id"), nullable=True)
-    notes = Column(Text)
-    created_by = Column(Integer, ForeignKey("users.id"))
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    document = relationship("Document")
-    creator = relationship("User")
 
 
 class ProjectionSetting(Base):
@@ -129,7 +134,7 @@ class ProjectionSetting(Base):
 class Indicador(Base):
     __tablename__ = "indicadores"
 
-    id = Column(String(100), primary_key=True)
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     nombre = Column(String(200), nullable=False)
     valor_actual = Column(Float, nullable=False)
     meta = Column(Float, nullable=False)
@@ -375,11 +380,17 @@ class Scenario(Base):
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    # 🔹 Nuevo campo: referencia al documento que generó este escenario
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False)
 
+    # Relaciones
     creator = relationship("User")
+    document = relationship("Document", backref="scenarios")
 
     def __repr__(self):
-        return f"<Scenario(name='{self.name}', type='{self.scenario_type}')>"
+        return f"<Scenario(name='{self.name}', type='{self.scenario_type}', document_id='{self.document_id}')>"
+
 
 
 class ScenarioProjection(Base):
@@ -408,7 +419,6 @@ class ScenarioConfiguration(Base):
     scenario_type = Column(String(20), nullable=False)
     parameter_name = Column(String(100), nullable=False)
     parameter_value = Column(Float, nullable=False)
-    description = Column(Text, nullable=True)
     updated_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

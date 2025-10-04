@@ -3,9 +3,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 from enum import Enum
 
-class LoginRequest(BaseModel):
-    email: EmailStr # Login ahora solo con email
-    password: str # <--- ESTE CAMPO ES CRUCIAL
+# ==================== USERS ====================
 
 class UserCreate(BaseModel):
     email: EmailStr
@@ -15,6 +13,16 @@ class UserCreate(BaseModel):
     phone_number: Optional[str] = None
     additional_notes: Optional[str] = None
     role: str = "instructor"
+
+class UserUpdate(BaseModel):
+    email: Optional[EmailStr] = None
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
+    phone_number: Optional[str] = None
+    additional_notes: Optional[str] = None
+    role: Optional[str] = None
+    is_active: Optional[bool] = None
+    password: Optional[str] = None
 
 class UserResponse(BaseModel):
     id: int
@@ -30,23 +38,19 @@ class UserResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class LoginRequest(BaseModel):
+    email: str = Field(..., description="Email del usuario")
+    password: str = Field(..., description="Contraseña")
+
 class LoginResponse(BaseModel):
     message: str
     user: UserResponse
     access_token: str
+    refresh_token: str 
     token_type: str
 
-class UserUpdate(BaseModel):
-    email: Optional[EmailStr] = None
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    phone_number: Optional[str] = None
-    additional_notes: Optional[str] = None
-    role: Optional[str] = None
-    is_active: Optional[bool] = None
-    password: Optional[str] = None  # ✅ Añadido
+# ==================== DOCUMENTS ====================
 
-# Nuevo esquema para la creación de documentos
 class DocumentCreate(BaseModel):
     title: str
     year: int
@@ -54,15 +58,13 @@ class DocumentCreate(BaseModel):
     core_line: str
     document_type: str
     additional_notes: Optional[str] = None
-    # file_path no se incluye aquí porque se generará en el backend
 
-# Nuevo esquema para la respuesta de documentos
 class DocumentResponse(BaseModel):
     id: int
     title: str
-    original_filename: str       
-    file_extension: str          
-    mime_type: str     
+    original_filename: str
+    file_extension: str
+    mime_type: str
     year: int
     sector: str
     core_line: str
@@ -71,9 +73,13 @@ class DocumentResponse(BaseModel):
     file_path: str
     uploaded_by_user_id: int
     uploaded_at: datetime
+    file_size: int  # <-- agregar este campo
+
 
     class Config:
         from_attributes = True
+
+# ==================== PROGRAMS ====================
 
 class ProgramCreate(BaseModel):
     code: str
@@ -85,6 +91,7 @@ class ProgramCreate(BaseModel):
     current_students: Optional[int] = 0
     region: Optional[str] = None
     description: Optional[str] = None
+    program_date: Optional[datetime]  # 
 
 class ProgramUpdate(BaseModel):
     code: Optional[str] = None
@@ -96,6 +103,7 @@ class ProgramUpdate(BaseModel):
     current_students: Optional[int] = None
     region: Optional[str] = None
     description: Optional[str] = None
+    program_date: Optional[datetime] = None 
     is_active: Optional[bool] = None
 
 class ProgramResponse(BaseModel):
@@ -109,6 +117,7 @@ class ProgramResponse(BaseModel):
     current_students: Optional[int]
     region: Optional[str]
     description: Optional[str]
+    program_date: Optional[datetime]  # <-- Made program_date optional to handle None values from database
     created_at: datetime
     updated_at: datetime
     created_by: int
@@ -117,9 +126,8 @@ class ProgramResponse(BaseModel):
         from_attributes = True
 
 
-# ----------------------- PDF ------------------------------------
+# ==================== REPORTS ====================
 
-# Enums
 class TipoReporte(str, Enum):
     INDICADORES = "indicadores"
     PROSPECTIVA = "prospectiva"
@@ -131,7 +139,6 @@ class EstadoReporte(str, Enum):
     COMPLETADO = "completado"
     ERROR = "error"
 
-# Schemas para Reportes
 class ParametrosReporte(BaseModel):
     fecha_inicio: Optional[datetime] = None
     fecha_fin: Optional[datetime] = None
@@ -143,7 +150,6 @@ class ParametrosReporte(BaseModel):
 class SolicitudReporte(BaseModel):
     tipo: TipoReporte
     parametros: ParametrosReporte
-    # ← Quitar usuario_id del request, se toma del usuario autenticado
 
 class ReporteResponse(BaseModel):
     id: int
@@ -154,30 +160,11 @@ class ReporteResponse(BaseModel):
     estado: EstadoReporte
     archivo_path: Optional[str] = None
     tamaño_archivo: Optional[int] = None
-    titulo_personalizado: Optional[str] = None  # ← para <h3>{{ reporte.titulo_personalizado }}
-    archivo_nombre: Optional[str] = None        # ← para el PDF
+    titulo_personalizado: Optional[str] = None
+    archivo_nombre: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 
-    class Config:
-        from_attributes = True
-
-# Schemas para Indicadores
-class IndicadorBase(BaseModel):
-    id: str
-    nombre: str
-    valor_actual: float
-    meta: float
-    unidad: str
-    tendencia: str
-    descripcion: Optional[str] = None
-    categoria: Optional[str] = None
-
-class IndicadorResponse(IndicadorBase):
-    fecha_actualizacion: datetime
-    cumplimiento: float
-    estado_semaforo: str
-    
     class Config:
         from_attributes = True
 
@@ -188,45 +175,6 @@ class TipoReporteInfo(BaseModel):
     tiempo_estimado: str
     opciones_disponibles: List[str]
 
-# Schemas adicionales para datos específicos
-class ResumenIndicadores(BaseModel):
-    total_indicadores: int
-    verde: int
-    amarillo: int
-    rojo: int
-    cumplimiento_general: float
-
-class EscenarioProspectiva(BaseModel):
-    nombre: str
-    descripcion: str
-    probabilidad: int
-    impacto: str
-    recomendaciones: List[str]
-
-class TendenciaSectorial(BaseModel):
-    sector: str
-    crecimiento_esperado: float
-    demanda: str
-
-class ProgramaSector(BaseModel):
-    sector: str
-    programas_activos: int
-    cupos: int
-    ocupacion: int
-
-class BrechaFormativa(BaseModel):
-    area: str
-    demanda: int
-    oferta: int
-    brecha: int
-
-class ResumenEjecutivo(BaseModel):
-    fortalezas: List[str]
-    oportunidades: List[str]
-    debilidades: List[str]
-    amenazas: List[str]
-
-# Schemas para respuestas de progreso
 class ProgresoReporte(BaseModel):
     id: int
     estado: EstadoReporte
@@ -235,7 +183,6 @@ class ProgresoReporte(BaseModel):
     porcentaje_completado: Optional[int] = None
     mensaje_estado: Optional[str] = None
 
-# Schema para estadísticas de reportes
 class EstadisticasReportes(BaseModel):
     total_reportes: int
     reportes_completados: int
@@ -244,17 +191,55 @@ class EstadisticasReportes(BaseModel):
     reportes_por_tipo: Dict[str, int]
     tiempo_promedio_generacion: Optional[float] = None
 
-# Schemas para escenarios
+# ==================== INDICATORS ====================
+
+class IndicadorCreate(BaseModel):
+    nombre: str
+    valor_actual: float
+    meta: float
+    unidad: str
+    tendencia: str
+    descripcion: Optional[str] = None
+    categoria: Optional[str] = None
+
+class IndicadorResponse(IndicadorCreate):
+    id: int
+    fecha_actualizacion: datetime
+    cumplimiento: float
+    estado_semaforo: str
+
+    class Config:
+        from_attributes = True
+
+class IndicadorUpdate(BaseModel):
+    id: int
+    nombre: str
+    descripcion: Optional[str] = None
+    valor_actual: float
+    meta: float
+    unidad: str
+    categoria: Optional[str] = None
+    tendencia: Optional[str] = None
+
+class ResumenIndicadores(BaseModel):
+    total_indicadores: int
+    verde: int
+    amarillo: int
+    rojo: int
+    cumplimiento_general: float
+
+# ==================== SCENARIOS ====================
+
 class ScenarioTypeEnum(str, Enum):
     TENDENCIAL = "tendencial"
     OPTIMISTA = "optimista"
     PESIMISTA = "pesimista"
 
 class ScenarioParametersBase(BaseModel):
-    growth_multiplier: float = Field(ge=0.1, le=5.0, description="Multiplicador de crecimiento")
-    demand_multiplier: float = Field(ge=0.1, le=5.0, description="Multiplicador de demanda")
-    economic_factor: float = Field(ge=0.1, le=3.0, description="Factor económico")
-    technology_adoption: float = Field(ge=0.1, le=2.0, description="Adopción tecnológica")
+    growth_multiplier: float = Field(ge=0.1, le=5.0)
+    demand_multiplier: float = Field(ge=0.1, le=5.0)
+    economic_factor: float = Field(ge=0.1, le=3.0)
+    technology_adoption: float = Field(ge=0.1, le=2.0)
 
 class ScenarioCreate(BaseModel):
     name: str = Field(max_length=100)
@@ -278,14 +263,14 @@ class ScenarioResponse(BaseModel):
     created_by: int
     created_at: datetime
     updated_at: datetime
-    
+
     class Config:
         from_attributes = True
 
 class ProjectionRequest(BaseModel):
-    scenario_ids: List[int] = Field(description="IDs de escenarios a proyectar")
-    sectors: Optional[List[str]] = Field(None, description="Sectores específicos (opcional)")
-    years_ahead: int = Field(default=10, ge=1, le=20, description="Años a proyectar")
+    scenario_ids: List[int]
+    sectors: Optional[List[str]] = None
+    years_ahead: int = Field(default=10, ge=1, le=20)
 
 class ProjectionDataPoint(BaseModel):
     year: int
@@ -317,8 +302,7 @@ class ScenarioExportRequest(BaseModel):
     include_charts: bool = True
     include_summary: bool = True
 
-
-# ----------------------- PERMISSIONS ------------------------------------
+# ==================== PERMISSIONS ====================
 
 class PermissionResponse(BaseModel):
     id: int
@@ -344,28 +328,30 @@ class RolePermissionResponse(BaseModel):
     class Config:
         from_attributes = True
 
+# ==================== DOFA ====================
+
 class DofaCategory(str, Enum):
     DEBILIDADES = "D"
-    OPORTUNIDADES = "O" 
+    OPORTUNIDADES = "O"
     FORTALEZAS = "F"
     AMENAZAS = "A"
 
 class DofaPriority(str, Enum):
     ALTA = "alta"
     MEDIA = "media"
-    BAJA = "baja"
+    BAJA = "baixa"
 
 class DofaItemCreate(BaseModel):
-    category: DofaCategory = Field(..., description="Categoría DOFA: D, O, F, A")
-    text: str = Field(..., min_length=1, max_length=1000, description="Texto del ítem DOFA")
-    source: Optional[str] = Field(None, max_length=500, description="Fuente o referencia")
-    responsible: Optional[str] = Field(None, max_length=200, description="Responsable")
-    priority: Optional[DofaPriority] = Field(None, description="Prioridad del ítem")
+    category: DofaCategory
+    text: str
+    source: Optional[str] = None
+    responsible: Optional[str] = None
+    priority: Optional[DofaPriority] = None
 
 class DofaItemUpdate(BaseModel):
-    text: Optional[str] = Field(None, min_length=1, max_length=1000)
-    source: Optional[str] = Field(None, max_length=500)
-    responsible: Optional[str] = Field(None, max_length=200)
+    text: Optional[str] = None
+    source: Optional[str] = None
+    responsible: Optional[str] = None
     priority: Optional[DofaPriority] = None
 
 class DofaItemResponse(BaseModel):
@@ -405,30 +391,100 @@ class DofaChangeLogResponse(BaseModel):
         from_attributes = True
 
 class DofaExportRequest(BaseModel):
-    format: str = Field(..., pattern="^(pdf|docx)$", description="Formato de exportación: pdf o docx")
-    include_metadata: bool = Field(True, description="Incluir metadatos (fechas, responsables)")
-    title: Optional[str] = Field("Análisis DOFA", max_length=200, description="Título del documento")
+    format: str = Field(..., pattern="^(pdf|docx)$")
+    include_metadata: bool = Field(True)
+    title: Optional[str] = "Análisis DOFA"
 
-# ==================== AUTH SCHEMAS ====================
+# ==================== SECTORES ====================
 
-class LoginRequest(BaseModel):
-    email: str = Field(..., description="Email del usuario")
-    password: str = Field(..., description="Contraseña")
+class SectorCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    is_active: Optional[bool] = True
 
-class UserResponse(BaseModel):
+class SectorUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class SectorResponse(BaseModel):
     id: int
-    email: str
-    first_name: Optional[str]
-    last_name: Optional[str]
-    role: str
+    name: str
+    description: Optional[str]
     is_active: bool
-    created_at: datetime
+    created_by: int
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
 
     class Config:
         from_attributes = True
 
-class LoginResponse(BaseModel):
-    message: str
-    user: UserResponse
-    access_token: str
-    token_type: str
+
+# ==================== CORE LINES ====================
+
+class CoreLineCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    sector_id: Optional[int] = None
+    is_active: Optional[bool] = True
+    created_by: int
+
+class CoreLineUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    sector_id: Optional[int] = None
+    is_active: Optional[bool] = None
+
+class CoreLineResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    sector_id: Optional[int]
+    is_active: bool
+    created_by: int
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+
+# ==================== DOCUMENT TYPES ====================
+
+class DocumentTypeCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    allowed_extensions: Optional[list[str]] = None
+    is_active: Optional[bool] = True
+    created_by: int
+
+class DocumentTypeUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    allowed_extensions: Optional[list[str]] = None
+    is_active: Optional[bool] = None
+
+class DocumentTypeResponse(BaseModel):
+    id: int
+    name: str
+    description: Optional[str]
+    allowed_extensions: Optional[list[str]]
+    is_active: bool
+    created_by: int
+    created_at: Optional[datetime]
+    updated_at: Optional[datetime]
+
+    class Config:
+        from_attributes = True
+
+# ==================== DEMAND INDICATORS ====================
+
+class DemandIndicatorCreate(BaseModel):
+    sector: str
+    year: int
+    demand_value: Optional[float] = None
+    indicator_value: Optional[float] = None
+    source_document_id: Optional[int] = None
+
+    class Config:
+        orm_mode = True

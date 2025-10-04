@@ -1,20 +1,31 @@
 import pandas as pd
 import re
+import chardet
 from sklearn.preprocessing import MinMaxScaler
-from typing import Optional, List
+from typing import Optional, List, Tuple, Dict
 
+
+# ==============================
+# 🔹 Detección de encoding
+# ==============================
+def detect_encoding(file_path: str) -> str:
+    """Detecta el encoding del archivo usando chardet."""
+    with open(file_path, "rb") as f:
+        result = chardet.detect(f.read(100000))
+    return result["encoding"] or "utf-8"
+
+
+# ==============================
+# 🔹 Carga flexible de CSV/XLSX
+# ==============================
 def load_file_flexible(file_path: str) -> pd.DataFrame:
     """Carga CSV o XLSX detectando delimitadores y limpiando datos."""
     if file_path.endswith(".csv"):
+        encoding = detect_encoding(file_path)
         try:
-            df = pd.read_csv(
-                file_path,
-                sep=";",                 # Forzar punto y coma
-                encoding="utf-8-sig"     # Quitar el BOM (ï»¿)
-            )
+            df = pd.read_csv(file_path, sep=";", encoding=encoding)
         except Exception:
-            # fallback: intentar con coma
-            df = pd.read_csv(file_path, sep=",", encoding="utf-8-sig")
+            df = pd.read_csv(file_path, sep=",", encoding=encoding)
     elif file_path.endswith(".xlsx"):
         df = pd.read_excel(file_path)
     else:
@@ -23,9 +34,12 @@ def load_file_flexible(file_path: str) -> pd.DataFrame:
     # 🔹 Limpiar comas decimales y porcentajes
     for col in df.columns:
         if df[col].dtype == "object":
-            df[col] = df[col].str.replace(",", ".", regex=False)   # 80,5 → 80.5
-            df[col] = df[col].str.replace("%", "", regex=False)    # 84,21% → 84.21
-            # Intentar convertir a número si aplica
+            df[col] = (
+                df[col]
+                .astype(str)
+                .str.replace(",", ".", regex=False)  # 80,5 → 80.5
+                .str.replace("%", "", regex=False)   # 84,21% → 84.21
+            )
             try:
                 df[col] = pd.to_numeric(df[col])
             except:
@@ -33,6 +47,10 @@ def load_file_flexible(file_path: str) -> pd.DataFrame:
     
     return df
 
+
+# ==============================
+# 🔹 Detección de columna de fecha
+# ==============================
 def detect_date_column(df: pd.DataFrame) -> Optional[str]:
     """Detecta automáticamente la columna de fecha en diferentes formatos."""
     date_patterns = [
@@ -63,8 +81,29 @@ def detect_date_column(df: pd.DataFrame) -> Optional[str]:
     
     return None
 
-def clean_and_prepare_flexible(df: pd.DataFrame) -> pd.DataFrame:
-    """Prepara el DataFrame detectando automáticamente la columna de fecha."""
+
+# ==============================
+# 🔹 Ajuste dinámico de ceros
+# ==============================
+def replace_zeros_dynamic(df, threshold=0.6):
+    df = df.copy()
+    for col in df.select_dtypes(include=['number']).columns:
+        zero_ratio = (df[col] == 0).mean()
+        if zero_ratio > threshold:
+            # calcular media sin los ceros
+            mean_val = df[col].replace(0, None).mean()
+            fill_val = mean_val if not pd.isna(mean_val) else 1.0
+            df[col] = df[col].replace(0, fill_val * 0.5)
+    return df
+
+# ==============================
+# 🔹 Limpieza y separación de datos
+# ==============================
+def clean_and_prepare_flexible(df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    Prepara el DataFrame detectando la columna de fecha.
+    Devuelve dos DataFrames: numérico para proyecciones y categórico (metadatos).
+    """
     df.columns = df.columns.str.strip()
     date_col = detect_date_column(df)
     
@@ -83,17 +122,55 @@ def clean_and_prepare_flexible(df: pd.DataFrame) -> pd.DataFrame:
     df.sort_index(inplace=True)
     df = df[df.index.notna()]
     
-    return df
+    # 🔹 Separar numéricas y categóricas
+    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+    meta_cols = df.select_dtypes(exclude=['number']).columns.tolist()
+    
+    df_numeric = df[numeric_cols].copy()
+    df_numeric = replace_zeros_dynamic(df_numeric)  # ✅ Ajuste automático de ceros
+    
+    df_meta = df[meta_cols].copy()
+    
+    return df_numeric, df_meta
 
-def scale_dataframe_safe(df: pd.DataFrame, scaler: MinMaxScaler) -> pd.DataFrame:
-    """Escala el DataFrame de forma segura manejando errores."""
-    try:
-        scaled_values = scaler.transform(df)
-        return pd.DataFrame(scaled_values, columns=df.columns, index=df.index)
-    except Exception as e:
-        print(f"⚠️ Error escalando datos: {e}")
-        return (df - df.min()) / (df.max() - df.min())
 
+# ==============================
+# 🔹 Escalado por columna
+# ==============================
+def fit_scalers(df: pd.DataFrame) -> Tuple[pd.DataFrame, Dict[str, MinMaxScaler]]:
+    """Escala cada columna con su propio MinMaxScaler."""
+    scalers = {}
+    scaled_data = {}
+    for col in df.columns:
+        scaler = MinMaxScaler()
+        scaled_data[col] = scaler.fit_transform(df[[col]])
+        scalers[col] = scaler
+    scaled_df = pd.DataFrame(
+        {col: scaled_data[col].ravel() for col in df.columns}, 
+        index=df.index
+    )
+    return scaled_df, scalers
+
+
+def scale_dataframe_safe(df: pd.DataFrame, scalers: Dict[str, MinMaxScaler]) -> pd.DataFrame:
+    """Escala un DataFrame usando scalers por columna de forma segura."""
+    scaled_data = {}
+    for col in df.columns:
+        if col in scalers:
+            try:
+                scaled_data[col] = scalers[col].transform(df[[col]]).ravel()
+            except Exception as e:
+                print(f"⚠️ Error escalando {col}: {e}")
+                scaled_data[col] = (df[col] - df[col].min()) / (df[col].max() - df[col].min())
+        else:
+            scaled_data[col] = df[col]
+    
+    return pd.DataFrame(scaled_data, index=df.index)
+
+
+# ==============================
+# 🔹 Validación del CSV
+# ==============================
 def validate_csv_structure(df: pd.DataFrame) -> List[str]:
     """Valida la estructura del CSV y retorna sugerencias."""
     issues = []
