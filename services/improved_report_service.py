@@ -104,23 +104,39 @@ class ImprovedReportService:
                 if not indicadores:
                     validacion["errores"].append("No se encontraron indicadores")
                     validacion["valido"] = False
+                    
             elif tipo == TipoReporte.PROSPECTIVA:
                 escenarios = datos.get("escenarios") or datos.get("prospectiva", {}).get("escenarios")
                 if not escenarios:
                     validacion["errores"].append("No se encontraron escenarios prospectivos")
                     validacion["valido"] = False
+                    
             elif tipo == TipoReporte.OFERTA_EDUCATIVA:
-                if not datos.get("oferta_educativa", {}).get("total_programas", 0):
+                # CORREGIDO: Manejar estructura normalizada
+                oferta_data = datos.get("oferta_educativa", {})
+                total_programas = 0
+                
+                if isinstance(oferta_data, dict):
+                    total_programas = oferta_data.get("resumen", {}).get("total_programas", 0)
+                    if total_programas == 0:
+                        # Intentar contar desde lista de programas
+                        total_programas = len(oferta_data.get("programas", []))
+                
+                if total_programas == 0:
                     validacion["errores"].append("No se encontraron programas educativos")
                     validacion["valido"] = False
+                    
             elif tipo == TipoReporte.CONSOLIDADO:
                 modulos_requeridos = ["indicadores", "dofa", "prospectiva", "oferta_educativa"]
                 modulos_presentes = [m for m in modulos_requeridos if datos.get(m)]
                 if len(modulos_presentes) < 2:
                     validacion["errores"].append("Datos insuficientes para reporte consolidado")
                     validacion["valido"] = False
+                    
         except Exception as e:
+            logger.error(f"Error en validación: {str(e)}", exc_info=True)
             return {"valido": False, "errores": [f"Error en validación: {str(e)}"]}
+        
         return validacion
     
     def _process_data_for_report_type(self, datos: Dict[str, Any], tipo: TipoReporte, parametros: ParametrosReporte) -> Dict[str, Any]:
@@ -196,14 +212,30 @@ class ImprovedReportService:
         }
     
     def _process_educational_offer_data(self, datos: Dict[str, Any], parametros: ParametrosReporte) -> Dict[str, Any]:
+        """CORREGIDO: Normalizar estructura de oferta educativa"""
         oferta_data = datos.get("oferta_educativa", {})
+        
+        # Normalizar si viene en formato inconsistente
+        if isinstance(oferta_data, list):
+            oferta_normalizada = {
+                "programas": oferta_data,
+                "resumen": {
+                    "total_programas": len(oferta_data),
+                    "programas_activos": len([p for p in oferta_data if p.get("estudiantes_actuales", 0) > 0])
+                }
+            }
+        elif isinstance(oferta_data, dict):
+            oferta_normalizada = oferta_data
+        else:
+            oferta_normalizada = {"programas": [], "resumen": {"total_programas": 0}}
         
         return {
             "tipo_reporte": "oferta_educativa",
-            "oferta_educativa": oferta_data
+            "oferta_educativa": oferta_normalizada
         }
     
     def _generate_executive_summary(self, datos: Dict[str, Any]) -> Dict[str, Any]:
+        """CORREGIDO: Manejar estructura normalizada"""
         indicadores = datos.get("indicadores", {})
         dofa = datos.get("dofa", {})
         prospectiva = datos.get("prospectiva", {})
@@ -212,6 +244,17 @@ class ImprovedReportService:
         resumen_ind = indicadores.get("resumen", {})
         cumplimiento = resumen_ind.get("cumplimiento_general", 0)
         
+        # CORREGIDO: Extraer valores según estructura
+        if isinstance(oferta, dict):
+            resumen_oferta = oferta.get("resumen", {})
+            total_programas = resumen_oferta.get("total_programas", 0)
+            sectores_atendidos = resumen_oferta.get("sectores_atendidos", 0)
+            ocupacion_promedio = resumen_oferta.get("ocupacion_promedio", 0)
+        else:
+            total_programas = 0
+            sectores_atendidos = 0
+            ocupacion_promedio = 0
+        
         mensaje = f"""
         El presente informe consolidado presenta un análisis integral del sistema estratégico.
         
@@ -219,9 +262,9 @@ class ImprovedReportService:
         {resumen_ind.get('verde', 0)} indicadores en estado óptimo, {resumen_ind.get('amarillo', 0)} 
         en estado de alerta y {resumen_ind.get('rojo', 0)} requiriendo atención inmediata.
         
-        La oferta educativa cuenta con {oferta.get('total_programas', 0)} programas activos 
-        atendiendo {oferta.get('sectores_atendidos', 0)} sectores estratégicos, con una ocupación 
-        promedio del {oferta.get('ocupacion_promedio', 0)}%.
+        La oferta educativa cuenta con {total_programas} programas activos 
+        atendiendo {sectores_atendidos} sectores estratégicos, con una ocupación 
+        promedio del {ocupacion_promedio}%.
         
         El análisis prospectivo contempla {prospectiva.get('resumen_general', {}).get('total_escenarios', 0)} 
         escenarios estratégicos con proyecciones en múltiples sectores.

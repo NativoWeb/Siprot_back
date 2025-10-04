@@ -5,6 +5,7 @@ from datetime import datetime
 from enum import Enum
 import logging
 import re
+from models import Scenario
 
 logger = logging.getLogger(__name__)
 
@@ -55,22 +56,44 @@ class ScenarioEngine:
             )
         }
     
-    def create_scenario(self, scenario_data: Dict, user_id: int):
-        """Crea un nuevo escenario en la base de datos"""
-        from models import Scenario
+    def create_scenario(self, scenario_data: dict, user_id: int) -> Scenario:
+        """
+        Crea un nuevo escenario en la base de datos
+        """
+        try:
+            # <CHANGE> Extraer document_id de los parámetros
+            document_id = None
+            if 'parameters' in scenario_data and isinstance(scenario_data['parameters'], dict):
+                document_id = scenario_data['parameters'].get('source_document_id')
+            elif 'parameters' in scenario_data and isinstance(scenario_data['parameters'], str):
+                import json
+                params = json.loads(scenario_data['parameters'])
+                document_id = params.get('source_document_id')
+            
+            # Si no hay document_id, lanzar error
+            if document_id is None:
+                raise ValueError("document_id es requerido para crear un escenario")
+            
+            scenario = Scenario(
+                name=scenario_data['name'],
+                scenario_type=scenario_data['scenario_type'],
+                description=scenario_data.get('description', ''),
+                parameters=scenario_data.get('parameters', {}),
+                created_by=user_id,
+                document_id=document_id  # <CHANGE> Agregar document_id aquí
+            )
+            
+            self.db.add(scenario)
+            self.db.commit()
+            self.db.refresh(scenario)
+            
+            logger.info(f"Escenario creado: {scenario.name} (ID: {scenario.id})")
+            return scenario
         
-        scenario = Scenario(
-            name=scenario_data["name"],
-            scenario_type=scenario_data["scenario_type"],
-            description=scenario_data["description"],
-            parameters=scenario_data["parameters"],
-            created_by=user_id
-        )
-        
-        self.db.add(scenario)
-        self.db.commit()
-        self.db.refresh(scenario)
-        return scenario
+        except Exception as e:
+            self.db.rollback()  # <CHANGE> Agregar rollback en caso de error
+            logger.error(f"Error creando escenario: {str(e)}")
+            raise
     
     def generate_scenario_projections(
         self,
@@ -95,7 +118,7 @@ class ScenarioEngine:
             logger.info(f"Columnas: {list(processed_df.columns)}")
             logger.info(f"Rango años: {processed_df.index.min()} - {processed_df.index.max()}")
 
-            # Extraer datos historicos
+            # Extraer datos historicos CON base_value
             historical_data = self._extract_complete_historical_data(processed_df)
             logger.info(f"Datos historicos: {len(historical_data)} años")
 
@@ -188,30 +211,61 @@ class ScenarioEngine:
         return df
     
     def _extract_complete_historical_data(self, df: pd.DataFrame) -> List[Dict]:
-        """Extrae TODOS los datos historicos disponibles"""
+        """
+        Extrae TODOS los datos historicos disponibles CON base_value calculado.
+        El base_value para datos historicos es el valor del año anterior (o el mismo si es el primero).
+        """
         historical = []
-
-        for year in df.index.unique():
+        years = sorted(df.index.unique())
+        
+        for idx, year in enumerate(years):
             year_data = {}
-
+            base_values = {}
+            
+            # Obtener valores del año actual
             for col in df.columns:
                 value = df.loc[year, col]
-
+                
                 if isinstance(value, pd.Series):
                     value = value.mean()
-
+                
                 if pd.notna(value):
                     try:
                         year_data[col] = max(0, float(value))
                     except Exception:
                         continue
-
+            
+            # Calcular base_value (valor del año anterior)
+            if idx > 0:
+                prev_year = years[idx - 1]
+                for col in df.columns:
+                    prev_value = df.loc[prev_year, col]
+                    if isinstance(prev_value, pd.Series):
+                        prev_value = prev_value.mean()
+                    if pd.notna(prev_value):
+                        try:
+                            base_values[col] = max(0, float(prev_value))
+                        except Exception:
+                            base_values[col] = year_data.get(col, 0)
+                    else:
+                        base_values[col] = year_data.get(col, 0)
+            else:
+                # Para el primer año, base_value = valor actual
+                base_values = year_data.copy()
+            
+            # Calcular promedio de base_value para el registro
+            avg_base_value = sum(base_values.values()) / len(base_values) if base_values else 0
+            
             if year_data:
                 historical.append({
                     'year': int(year),
-                    'values': year_data
+                    'values': year_data,
+                    'base_value': avg_base_value,  # Agregado base_value
+                    'multiplier': 1.0,  # Para datos históricos, multiplier es 1.0
+                    'sector': 'General'  # Agregado sector
                 })
-
+        
+        logger.info(f"Extraídos {len(historical)} años históricos con base_value")
         return historical
     
     def _calculate_real_trends(self, df: pd.DataFrame) -> Dict[str, float]:
@@ -238,7 +292,7 @@ class ScenarioEngine:
     def _get_scenario_config_by_id(self, scenario_id: int) -> ScenarioConfig:
         """Obtiene configuracion del escenario por ID"""
         try:
-            from models import Scenario
+            # <CHANGE> Remover "from models import Scenario" de aquí ya que está al inicio
             scenario = self.db.query(Scenario).filter(Scenario.id == scenario_id).first()
             if scenario and scenario.scenario_type:
                 return self.scenarios[ScenarioType(scenario.scenario_type)]
@@ -256,13 +310,6 @@ class ScenarioEngine:
     ) -> List[Dict]:
         """
         Genera proyecciones futuras basadas en datos historicos con parametros personalizados.
-        
-        Args:
-            df: DataFrame con datos historicos
-            trends: Tendencias calculadas por indicador
-            scenario_config: Configuracion del tipo de escenario
-            years_ahead: Años a proyectar
-            custom_params: Parametros personalizados del usuario (ej: {'default': 1.2, 'tecnologia': 1.5})
         """
         projections = []
         last_year = int(df.index.max())
@@ -276,10 +323,12 @@ class ScenarioEngine:
         # Obtener multiplicador general (default)
         general_multiplier = custom_params.get('default', 1.0)
         
+        initial_base_value = sum(last_values.values()) / len(last_values) if last_values else 0
+        
         for year_offset in range(1, years_ahead + 1):
             future_year = last_year + year_offset
             future_values = {}
-            projection_multipliers = {}  # 👈 dict para guardar multiplicadores por columna
+            projection_multipliers = {}
 
             for col, last_value in last_values.items():
                 # 1. Tendencia historica real del indicador
@@ -330,17 +379,19 @@ class ScenarioEngine:
                     f"Proyectado={final_value:.2f}"
                 )
 
+            avg_projected_base = sum(last_values.values()) / len(last_values) if last_values else 0
+            
             projections.append({
                 'year': future_year,
                 'values': future_values,
-                'multipliers': projection_multipliers,  # 👈 ahora se guarda detalle por columna
+                'multipliers': projection_multipliers,
                 'sector': 'General',
-                'base_value': sum(last_values.values()) / len(last_values) if last_values else 0
+                'base_value': avg_projected_base,  # base_value calculado correctamente
+                'multiplier': general_multiplier  # Agregado multiplicador general
             })
 
         logger.info(f"Generadas {len(projections)} proyecciones con parametros aplicados")
         return projections
-
     
     def _generate_fallback_projections(self, years_ahead: int) -> List[Dict]:
         """Genera proyecciones sinteticas como respaldo"""
@@ -348,15 +399,28 @@ class ScenarioEngine:
         current_year = datetime.now().year
         
         # Generar datos historicos sinteticos
+        base_values = {
+            'Estudiantes': 1000.0,
+            'Programas': 20.0,
+            'Graduados': 250.0
+        }
+        
         for i in range(10, 0, -1):
+            year_values = {
+                'Estudiantes': float(1000 + np.random.uniform(-200, 200)),
+                'Programas': float(20 + np.random.uniform(-5, 5)),
+                'Graduados': float(250 + np.random.uniform(-50, 50))
+            }
+            
             projections.append({
                 'year': current_year - i,
-                'values': {
-                    'Estudiantes': float(1000 + np.random.uniform(-200, 200)),
-                    'Programas': float(20 + np.random.uniform(-5, 5)),
-                    'Graduados': float(250 + np.random.uniform(-50, 50))
-                }
+                'values': year_values,
+                'base_value': sum(base_values.values()) / len(base_values),
+                'multiplier': 1.0,
+                'sector': 'General'
             })
+            
+            base_values = year_values.copy()
         
         # Generar proyecciones futuras
         last_values = projections[-1]['values']
@@ -367,7 +431,14 @@ class ScenarioEngine:
                 growth = 1.02 ** year_offset
                 noise = np.random.uniform(0.9, 1.1)
                 fvalues[ind] = float(base * growth * noise)
-            projections.append({'year': fyear, 'values': fvalues})
+            
+            projections.append({
+                'year': fyear,
+                'values': fvalues,
+                'base_value': sum(last_values.values()) / len(last_values),
+                'multiplier': 1.0,
+                'sector': 'General'
+            })
         
         return projections
     
@@ -382,4 +453,3 @@ class ScenarioEngine:
     def initialize_default_scenarios(self, user_id: int):
         """Inicializa escenarios predefinidos"""
         pass
-    

@@ -380,11 +380,17 @@ class Scenario(Base):
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    # 🔹 Nuevo campo: referencia al documento que generó este escenario
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False)
 
+    # Relaciones
     creator = relationship("User")
+    document = relationship("Document", backref="scenarios")
 
     def __repr__(self):
-        return f"<Scenario(name='{self.name}', type='{self.scenario_type}')>"
+        return f"<Scenario(name='{self.name}', type='{self.scenario_type}', document_id='{self.document_id}')>"
+
 
 
 class ScenarioProjection(Base):

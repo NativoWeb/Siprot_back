@@ -503,6 +503,18 @@ def list_existing_scenarios(
                 doc_id = scenario.parameters['source_document_id']
                 source_document = db.query(Document).filter(Document.id == doc_id).first()
 
+            configurations = db.query(ScenarioConfiguration).filter(
+                ScenarioConfiguration.scenario_type == scenario.scenario_type
+            ).all()
+            
+            multipliers = {}
+            for config in configurations:
+                multipliers[config.parameter_name] = config.parameter_value
+
+            projections_count = db.query(ScenarioProjection).filter(
+                ScenarioProjection.scenario_id == scenario.id
+            ).count()
+
             scenario_data = {
                 "id": scenario.id,
                 "name": scenario.name,
@@ -516,6 +528,7 @@ def list_existing_scenarios(
                     "role": creator.role if creator else None,
                     "full_name": f"{creator.first_name} {creator.last_name}".strip() if creator and creator.first_name else (creator.email if creator else "Usuario eliminado")
                 },
+                "created_by_name": f"{creator.first_name} {creator.last_name}".strip() if creator and creator.first_name else (creator.email if creator else "Usuario eliminado"),
                 "source_document": {
                     "id": source_document.id if source_document else None,
                     "title": source_document.title if source_document else None,
@@ -523,7 +536,9 @@ def list_existing_scenarios(
                     "year": source_document.year if source_document else None,
                     "sector": source_document.sector if source_document else None
                 } if source_document else None,
-                "color": get_scenario_color(scenario.scenario_type)
+                "color": get_scenario_color(scenario.scenario_type),
+                "multipliers": multipliers,
+                "projections_count": projections_count
             }
             scenarios_list.append(scenario_data)
 
@@ -536,14 +551,13 @@ def list_existing_scenarios(
             detail="Error obteniendo lista de escenarios"
         )
 
-
 @router.get("/details/{scenario_id}")
 def get_scenario_details(
     scenario_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["planeacion", "administrativo", "instructor"]))
 ):
-    """Obtiene los detalles completos de un escenario específico"""
+    """Obtiene los detalles completos de un escenario específico con datos para lista"""
     try:
         scenario = db.query(Scenario).filter(
             Scenario.id == scenario_id,
@@ -553,13 +567,32 @@ def get_scenario_details(
         if not scenario:
             raise HTTPException(status_code=404, detail="Escenario no encontrado")
 
+        # <CHANGE> Obtener multiplicadores desde scenario_configurations
+        multipliers = {}
+        configs = db.query(ScenarioConfiguration).filter(
+            ScenarioConfiguration.scenario_type == scenario.scenario_type
+        ).all()
+        
+        for config in configs:
+            multipliers[config.parameter_name] = config.parameter_value
+        
+        # Asegurar que existan los 3 multiplicadores
+        mult_general = multipliers.get('default', 1.0)
+        mult_tecnologia = multipliers.get('tecnologia', 1.0)
+        mult_empleo = multipliers.get('empleo', 1.0)
+
         creator = db.query(User).filter(User.id == scenario.created_by).first()
 
+        # Obtener proyecciones de la BD
         projections_q = db.query(ScenarioProjection).filter(
             ScenarioProjection.scenario_id == scenario_id
         ).order_by(ScenarioProjection.year.asc()).all()
         
+        # <CHANGE> Crear estructura de datos para la lista
+        list_data = []
         projections = []
+        current_year = pd.Timestamp.now().year
+        
         if projections_q:
             by_year = {}
             for p in projections_q:
@@ -567,9 +600,33 @@ def get_scenario_details(
                 if y not in by_year:
                     by_year[y] = {"year": y, "sector": p.sector, "values": {}}
                 by_year[y]["values"][p.indicator_type] = sanitize_float(p.projected_value)
+            
             projections = [by_year[y] for y in sorted(by_year.keys())]
             projections = sanitize_projection_data(projections)
+            
+            # <CHANGE> Crear list_data con formato: año, tipo, sector, indicador, valor, multiplicadores
+            for proj in projections:
+                year = proj.get('year')
+                sector = proj.get('sector', 'General')
+                values = proj.get('values', {})
+                is_projected = year > current_year
+                
+                # Crear una fila por cada indicador
+                for indicator_name, indicator_value in values.items():
+                    row = {
+                        'año': year,
+                        'tipo': scenario.scenario_type,
+                        'sector': sector,
+                        'indicador': indicator_name,
+                        'valor': sanitize_float(indicator_value),
+                        'multiplicador_general': mult_general if is_projected else None,
+                        'multiplicador_tecnologia': mult_tecnologia if is_projected else None,
+                        'multiplicador_empleo': mult_empleo if is_projected else None
+                    }
+                    list_data.append(row)
+        
         else:
+            # Regenerar proyecciones si no existen
             source_document = None
             if scenario.parameters and 'source_document_id' in scenario.parameters:
                 doc_id = scenario.parameters['source_document_id']
@@ -586,6 +643,26 @@ def get_scenario_details(
                             scenario.id, df, 10, custom_params=custom_params
                         )
                         projections = sanitize_projection_data(projections)
+                        
+                        # Crear list_data también para proyecciones regeneradas
+                        for proj in projections:
+                            year = proj.get('year')
+                            sector = proj.get('sector', 'General')
+                            values = proj.get('values', {})
+                            is_projected = year > current_year
+                            
+                            for indicator_name, indicator_value in values.items():
+                                row = {
+                                    'año': year,
+                                    'tipo': scenario.scenario_type,
+                                    'sector': sector,
+                                    'indicador': indicator_name,
+                                    'valor': sanitize_float(indicator_value),
+                                    'multiplicador_general': mult_general if is_projected else None,
+                                    'multiplicador_tecnologia': mult_tecnologia if is_projected else None,
+                                    'multiplicador_empleo': mult_empleo if is_projected else None
+                                }
+                                list_data.append(row)
                 except Exception as e:
                     logger.warning(f"No se pudieron regenerar proyecciones: {e}")
 
@@ -605,11 +682,17 @@ def get_scenario_details(
             },
             "source_document": None,
             "color": get_scenario_color(scenario.scenario_type),
-            "data": projections,
+            "data": projections,  # Formato original para gráficos
+            "list_data": list_data,  # <CHANGE> Nuevo formato para la lista
+            "multipliers": {  # <CHANGE> Multiplicadores del escenario
+                "general": mult_general,
+                "tecnologia": mult_tecnologia,
+                "empleo": mult_empleo
+            },
             "metadata": {
                 "total_years": len(projections),
-                "historical_years": len([p for p in projections if p.get('year', 0) <= pd.Timestamp.now().year]),
-                "future_years": len([p for p in projections if p.get('year', 0) > pd.Timestamp.now().year]),
+                "historical_years": len([p for p in projections if p.get('year', 0) <= current_year]),
+                "future_years": len([p for p in projections if p.get('year', 0) > current_year]),
                 "indicators": list(projections[0].get('values', {}).keys()) if projections else []
             }
         }
@@ -637,7 +720,6 @@ def get_scenario_details(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error obteniendo detalles del escenario"
         )
-
 
 def get_scenario_color(scenario_type: str) -> str:
     """Colores por tipo de escenario"""

@@ -3,6 +3,7 @@ from typing import Dict, Any, List
 from sqlalchemy.orm import Session
 from datetime import datetime
 from schemas import TipoReporte, ParametrosReporte
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
@@ -11,6 +12,16 @@ def format_decimal(value: float, precision: int = 3) -> float:
     if value is None:
         return 0.0
     return round(float(value), precision)
+
+def sanitize_float(value):
+    """Sanitiza valores flotantes para evitar NaN/Infinity"""
+    if value is None:
+        return 0.0
+    if isinstance(value, (int, float)):
+        if pd.isna(value) or value == float('inf') or value == float('-inf'):
+            return 0.0
+        return float(value)
+    return 0.0
 
 class IntegratedDataCollectorService:
     """Servicio integrado de recolección de datos usando servicios existentes"""
@@ -144,96 +155,214 @@ class IntegratedDataCollectorService:
 
     # === PROSPECTIVA ===
     def _collect_prospective_data(self, parametros):
+        """
+        Recolecta datos de prospectiva usando el mismo formato que el endpoint /details/{scenario_id}
+        para asegurar consistencia en la visualización de PDFs
+        """
         try:
-            from models import Scenario, ScenarioProjection, ScenarioConfiguration
+            from models import Scenario, ScenarioProjection, ScenarioConfiguration, User, Document
+            
             scenarios = self.db.query(Scenario).filter(Scenario.is_active == True).all()
             escenarios_procesados = []
             
             for scenario in scenarios:
-                projections = self.db.query(ScenarioProjection).filter(
+                # Obtener creador del escenario
+                creator = self.db.query(User).filter(User.id == scenario.created_by).first()
+                
+                # Obtener proyecciones ordenadas por año
+                projections_q = self.db.query(ScenarioProjection).filter(
                     ScenarioProjection.scenario_id == scenario.id
                 ).order_by(ScenarioProjection.year.asc()).all()
                 
+                # Obtener configuraciones del tipo de escenario
+                configurations = self.db.query(ScenarioConfiguration).filter(
+                    ScenarioConfiguration.scenario_type == scenario.scenario_type
+                ).all()
+                
+                # Construir diccionario de multiplicadores desde configuraciones
+                multipliers = {}
+                for config in configurations:
+                    multipliers[config.parameter_name] = config.parameter_value
+                
+                logger.info(f"Multiplicadores cargados para escenario {scenario.id}: {multipliers}")
+                
+                # Procesar proyecciones agrupadas por año (igual que en el endpoint de detalles)
                 proyecciones_procesadas = []
                 proyecciones_por_año = {}
                 proyecciones_por_sector = {}
                 
-                for proj in projections:
-                    year = proj.year
-                    sector = proj.sector
-                    proyeccion_simple = {
-                        "año": year,
-                        "sector": sector,
-                        "indicador": proj.indicator_type,
-                        "valor_proyectado": format_decimal(proj.projected_value),
-                        "valor_base": format_decimal(proj.base_value),
-                        "multiplicador_aplicado": format_decimal(proj.multiplier_applied),
-                        "valor": format_decimal(proj.projected_value)
-                    }
-                    proyecciones_procesadas.append(proyeccion_simple)
+                if projections_q:
+                    # Agrupar proyecciones por año
+                    by_year = {}
+                    for p in projections_q:
+                        y = p.year
+                        if y not in by_year:
+                            by_year[y] = {
+                                "year": y,
+                                "año": y,  # Alias para compatibilidad
+                                "sector": p.sector,
+                                "base_value": sanitize_float(p.base_value),
+                                "values": {},
+                                "multipliers": {}
+                            }
+                        
+                        # Agregar valor del indicador
+                        by_year[y]["values"][p.indicator_type] = sanitize_float(p.projected_value)
+                        
+                        # Encontrar multiplicador específico para este indicador
+                        indicator_key = p.indicator_type.lower().replace(' ', '_')
+                        multiplier_value = multipliers.get(indicator_key, multipliers.get('default', 1.0))
+                        by_year[y]["multipliers"][p.indicator_type] = multiplier_value
+                        
+                        # También guardar en formato simple para compatibilidad
+                        proyeccion_simple = {
+                            "año": y,
+                            "sector": p.sector,
+                            "indicador": p.indicator_type,
+                            "valor_proyectado": format_decimal(p.projected_value),
+                            "valor_base": format_decimal(p.base_value),
+                            "multiplicador_aplicado": format_decimal(p.multiplier_applied),
+                            "valor": format_decimal(p.projected_value)
+                        }
+                        proyecciones_procesadas.append(proyeccion_simple)
+                        
+                        # Agrupar por año para resumen
+                        if y not in proyecciones_por_año:
+                            proyecciones_por_año[y] = {"año": y, "proyecciones": [], "valor_promedio": 0}
+                        proyecciones_por_año[y]["proyecciones"].append(proyeccion_simple)
+                        
+                        # Agrupar por sector
+                        if p.sector not in proyecciones_por_sector:
+                            proyecciones_por_sector[p.sector] = []
+                        proyecciones_por_sector[p.sector].append(proyeccion_simple)
                     
-                    if year not in proyecciones_por_año:
-                        proyecciones_por_año[year] = {"año": year, "proyecciones": [], "valor_promedio": 0}
-                    proyecciones_por_año[year]["proyecciones"].append(proyeccion_simple)
+                    # Convertir a lista y agregar multiplicador general
+                    data_projections = []
+                    for year_data in by_year.values():
+                        # Calcular multiplicador promedio para el año
+                        if year_data["multipliers"]:
+                            avg_multiplier = sum(year_data["multipliers"].values()) / len(year_data["multipliers"])
+                        else:
+                            avg_multiplier = multipliers.get('default', 1.0)
+                        
+                        year_data["multiplier"] = avg_multiplier
+                        data_projections.append(year_data)
                     
-                    if sector not in proyecciones_por_sector:
-                        proyecciones_por_sector[sector] = []
-                    proyecciones_por_sector[sector].append(proyeccion_simple)
+                    data_projections = sorted(data_projections, key=lambda x: x["year"])
+                    
+                    # Calcular promedio por año
+                    for year_data in proyecciones_por_año.values():
+                        projs = year_data["proyecciones"]
+                        if projs:
+                            promedio = sum(p["valor_proyectado"] for p in projs) / len(projs)
+                            year_data["valor_promedio"] = format_decimal(promedio)
+                else:
+                    data_projections = []
                 
-                # Calcular promedio por año
-                for year_data in proyecciones_por_año.values():
-                    projs = year_data["proyecciones"]
-                    if projs:
-                        promedio = sum(p["valor_proyectado"] for p in projs) / len(projs)
-                        year_data["valor_promedio"] = format_decimal(promedio)
+                # Calcular métricas del escenario
+                años_proyectados = sorted(list(set(p.year for p in projections_q))) if projections_q else []
+                sectores_cubiertos = list(set(p.sector for p in projections_q)) if projections_q else []
                 
-                # Métricas del escenario
-                años_proyectados = sorted(list(set(p.year for p in projections)))
-                sectores_cubiertos = list(set(p.sector for p in projections))
+                # Calcular crecimiento promedio
                 crecimiento_promedio = 0
-                if len(projections) > 1:
+                if len(projections_q) > 1:
                     crecimientos = []
-                    for p in projections:
+                    for p in projections_q:
                         if p.base_value > 0:
                             crecimiento = ((p.projected_value - p.base_value) / p.base_value * 100)
                             crecimientos.append(crecimiento)
                     crecimiento_promedio = format_decimal(sum(crecimientos)/len(crecimientos) if crecimientos else 0)
                 
-                configurations = self.db.query(ScenarioConfiguration).filter(
-                    ScenarioConfiguration.scenario_type == scenario.scenario_type
-                ).all()
-                parametros_personalizados = {config.parameter_name: getattr(config, 'parameter_value', None) for config in configurations}
+                # Obtener documento fuente si existe
+                source_document = None
+                if scenario.parameters and 'source_document_id' in scenario.parameters:
+                    doc_id = scenario.parameters['source_document_id']
+                    src_doc = self.db.query(Document).filter(Document.id == doc_id).first()
+                    if src_doc:
+                        source_document = {
+                            "id": src_doc.id,
+                            "title": src_doc.title,
+                            "filename": src_doc.original_filename,
+                            "year": src_doc.year,
+                            "sector": src_doc.sector,
+                            "core_line": getattr(src_doc, 'core_line', None)
+                        }
                 
+                # Construir datos del escenario en formato compatible con endpoint de detalles
                 escenario_data = {
                     "id": scenario.id,
                     "nombre": scenario.name,
+                    "name": scenario.name,  # Alias para compatibilidad
                     "tipo": scenario.scenario_type,
+                    "scenario_type": scenario.scenario_type,  # Alias para compatibilidad
                     "tipo_clasificado": self._clasificar_tipo_escenario(scenario.scenario_type),
                     "descripcion": scenario.description or f"Escenario {scenario.scenario_type}",
+                    "description": scenario.description or f"Escenario {scenario.scenario_type}",  # Alias
+                    
+                    # Información del creador
+                    "created_by": {
+                        "id": creator.id if creator else None,
+                        "email": creator.email if creator else "Usuario eliminado",
+                        "role": creator.role if creator else None,
+                        "full_name": f"{creator.first_name} {creator.last_name}".strip() if creator and creator.first_name else (creator.email if creator else "Usuario eliminado")
+                    } if creator else None,
+                    
+                    # Documento fuente
+                    "source_document": source_document,
+                    
+                    # Proyecciones en formato detallado (como endpoint /details)
+                    "data": data_projections,
+                    
+                    # Proyecciones en formato simple (para compatibilidad)
                     "proyecciones": proyecciones_procesadas,
                     "proyecciones_por_año": list(proyecciones_por_año.values()),
                     "proyecciones_por_sector": proyecciones_por_sector,
+                    
+                    # Parámetros y configuración
                     "parametros_originales": scenario.parameters or {},
-                    "parametros_personalizados": parametros_personalizados,
+                    "parameters": scenario.parameters or {},  # Alias
+                    "multipliers": multipliers,
+                    "parametros_personalizados": multipliers,
+                    
+                    # Métricas calculadas
                     "metricas": {
-                        "total_proyecciones": len(projections),
+                        "total_proyecciones": len(projections_q) if projections_q else 0,
                         "años_cubiertos": len(años_proyectados),
                         "sectores_cubiertos": len(sectores_cubiertos),
                         "crecimiento_promedio": crecimiento_promedio,
                         "año_inicial": min(años_proyectados) if años_proyectados else None,
                         "año_final": max(años_proyectados) if años_proyectados else None
                     },
+                    
+                    # Metadata adicional (como endpoint /details)
+                    "metadata": {
+                        "total_years": len(data_projections),
+                        "historical_years": len([p for p in data_projections if p.get('year', 0) <= pd.Timestamp.now().year]),
+                        "future_years": len([p for p in data_projections if p.get('year', 0) > pd.Timestamp.now().year]),
+                        "indicators": list(data_projections[0].get('values', {}).keys()) if data_projections else []
+                    },
+                    
+                    # Listas auxiliares
                     "años_proyectados": años_proyectados,
                     "sectores": sectores_cubiertos,
+                    
+                    # Fechas
                     "fecha_creacion": scenario.created_at.isoformat() if scenario.created_at else None,
-                    "fecha_actualizacion": scenario.updated_at.isoformat() if scenario.updated_at else None
+                    "created_at": scenario.created_at.isoformat() if scenario.created_at else None,  # Alias
+                    "fecha_actualizacion": scenario.updated_at.isoformat() if scenario.updated_at else None,
+                    "updated_at": scenario.updated_at.isoformat() if scenario.updated_at else None,  # Alias
+                    
+                    # Color para visualización
+                    "color": self._get_scenario_color(scenario.scenario_type)
                 }
                 
                 escenarios_procesados.append(escenario_data)
             
+            # Si no hay escenarios, usar datos de muestra
             if not escenarios_procesados:
                 escenarios_procesados = self._get_sample_scenarios()
             
+            # Calcular resumen general
             total_proyecciones = sum(esc.get('metricas', {}).get('total_proyecciones', 0) for esc in escenarios_procesados)
             sectores_unicos = set()
             for esc in escenarios_procesados:
@@ -254,6 +383,8 @@ class IntegratedDataCollectorService:
                     "factores_clave": self._get_factores_clave_from_scenarios(scenarios)
                 }
             }
+            
+            logger.info(f"Datos de prospectiva recolectados: {len(escenarios_procesados)} escenarios")
             return resultado
         
         except Exception as e:
@@ -276,16 +407,32 @@ class IntegratedDataCollectorService:
                     ]
                 }
             }
+        
+    def _get_scenario_color(self, scenario_type: str) -> str:
+        """Retorna color según tipo de escenario"""
+        colores = {
+            "tendencial": "#3B82F6",
+            "optimista": "#10B981",
+            "pesimista": "#EF4444",
+        }
+        return colores.get(scenario_type.lower(), "#6B7280")
 
     # === OFERTA EDUCATIVA ===
     def _collect_educational_data(self, parametros):
+        """MODIFICADO: Retorna estructura consistente con diccionario"""
         try:
             from models import Program
             programas = self.db.query(Program).all()
             programas_procesados = []
+            
+            total_capacidad = 0
+            total_estudiantes = 0
+            sectores = set()
+            regiones = set()
+            
             for prog in programas:
                 ocupacion = format_decimal((prog.current_students / prog.capacity * 100) if prog.capacity > 0 else 0)
-                programas_procesados.append({
+                programa_data = {
                     "id": prog.id,
                     "codigo": prog.code,
                     "nombre": prog.name,
@@ -296,13 +443,53 @@ class IntegratedDataCollectorService:
                     "estudiantes_actuales": prog.current_students,
                     "ocupacion": ocupacion,
                     "region": prog.region
-                })
+                }
+                programas_procesados.append(programa_data)
+                
+                total_capacidad += prog.capacity
+                total_estudiantes += prog.current_students
+                if prog.sector:
+                    sectores.add(prog.sector)
+                if prog.region:
+                    regiones.add(prog.region)
+            
             if not programas_procesados:
                 programas_procesados = self._get_sample_programs()
-            return {"oferta_educativa": programas_procesados}
+            
+            ocupacion_promedio = format_decimal((total_estudiantes / total_capacidad * 100) if total_capacidad > 0 else 0)
+            
+            # ESTRUCTURA NORMALIZADA
+            return {
+                "oferta_educativa": {
+                    "programas": programas_procesados,
+                    "resumen": {
+                        "total_programas": len(programas_procesados),
+                        "programas_activos": len([p for p in programas_procesados if p.get("estudiantes_actuales", 0) > 0]),
+                        "capacidad_total": total_capacidad,
+                        "estudiantes_totales": total_estudiantes,
+                        "ocupacion_promedio": ocupacion_promedio,
+                        "sectores_atendidos": len(sectores),
+                        "sectores": list(sectores),
+                        "regiones_cobertura": len(regiones),
+                        "regiones": list(regiones)
+                    }
+                }
+            }
         except Exception as e:
             logger.error(f"Error recolectando oferta educativa: {str(e)}")
-            return {"oferta_educativa": self._get_sample_programs()}
+            sample_programs = self._get_sample_programs()
+            return {
+                "oferta_educativa": {
+                    "programas": sample_programs,
+                    "resumen": {
+                        "total_programas": len(sample_programs),
+                        "programas_activos": 1,
+                        "ocupacion_promedio": 60.0,
+                        "sectores_atendidos": 1,
+                        "sectores": ["Tecnología"]
+                    }
+                }
+            }
 
     # === MÉTODOS AUXILIARES / MUESTRA DE DATOS ===
     def _get_sample_indicators(self):

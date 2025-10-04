@@ -274,14 +274,15 @@ class PDFService:
         for p in proyecciones:
             año = p.get('año', 0)
             
-            # Solo proyecciones futuras dentro del rango
-            if año < año_actual or año > año_actual + max_años:
+            # Solo proyecciones futuras dentro del rango (hasta 9 años)
+            if año < año_actual or año > año_actual + 9:
                 continue
             
             # Simplificar estructura: extraer solo indicadores clave
             p_simplificada = {
                 'año': año,
-                'sector': p.get('sector', 'General')
+                'sector': p.get('sector', 'General'),
+                'multiplicador': p.get('multiplicador_aplicado', 1.0)  # Agregar multiplicador
             }
             
             # Buscar indicadores prioritarios
@@ -293,7 +294,7 @@ class PDFService:
             # Si tiene valor_proyectado directo
             if 'valor_proyectado' in p:
                 p_simplificada['valor'] = p['valor_proyectado']
-                p_simplificada['indicador'] = p.get('tipo_indicador', 'Proyección')
+                p_simplificada['indicador'] = p.get('indicador', p.get('tipo_indicador', 'Proyección'))  # Usar 'indicador' primero
             else:
                 # Buscar en todos los campos
                 for key, val in p.items():
@@ -736,7 +737,7 @@ class PDFService:
                 ['Cumplimiento General', f"{resumen.get('cumplimiento_general', 0)}%"]
             ]
             
-            tabla_resumen = Table(resumen_data, colWidths=[3*inch, 2*inch])
+            tabla_resumen = Table(resumen_data, colWidths=[2*inch, 2*inch])
             tabla_resumen.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), self.institutional_colors["primary"]),
                 ('TEXTCOLOR', (0, 0), (-1, 0), white),
@@ -792,7 +793,7 @@ class PDFService:
 
     def _agregar_seccion_escenarios_mejorada(self, story: List, escenarios: Dict[str, Any]):
         """
-        VERSIÓN MEJORADA con gráficas de proyecciones
+        VERSIÓN MEJORADA sin gráficas de proyecciones
         """
         prospectiva = escenarios.get("prospectiva", escenarios)
         lista_escenarios = prospectiva.get("escenarios", [])
@@ -824,31 +825,7 @@ class PDFService:
             story.append(tabla_resumen)
             story.append(Spacer(1, 20))
         
-        # *** NUEVA SECCIÓN: GRÁFICA COMPARATIVA DE TODOS LOS ESCENARIOS ***
-        if lista_escenarios and len(lista_escenarios) > 1:
-            story.append(Paragraph("Comparación Visual de Escenarios", self.styles['SubsectionTitle']))
-            story.append(Spacer(1, 10))
-            
-            # Preparar datos para gráfica
-            escenarios_para_grafica = []
-            for escenario in lista_escenarios:
-                proyecciones = escenario.get('proyecciones', [])
-                if proyecciones:
-                    # Filtrar proyecciones relevantes
-                    proyecciones_filtradas = self._filtrar_proyecciones_relevantes(proyecciones, max_años=5)
-                    
-                    escenarios_para_grafica.append({
-                        'nombre': escenario.get('nombre', 'Escenario'),
-                        'tipo': escenario.get('tipo', ''),
-                        'proyecciones': proyecciones_filtradas
-                    })
-            
-            # Crear y agregar gráfica
-            if escenarios_para_grafica:
-                grafica = self._crear_grafica_escenarios(escenarios_para_grafica)
-                if grafica:
-                    story.append(grafica)
-                    story.append(Spacer(1, 20))
+        # Ya no se genera la gráfica visual de proyecciones
         
         # Detalle de escenarios
         if lista_escenarios:
@@ -867,20 +844,25 @@ class PDFService:
                 if proyecciones:
                     story.append(Paragraph("Proyecciones:", self.styles['Normal']))
                     
-                    # Filtrar proyecciones para mostrar solo las más relevantes
-                    proyecciones_filtradas = self._filtrar_proyecciones_relevantes(proyecciones, max_años=3)
+                    proyecciones_filtradas = self._filtrar_proyecciones_relevantes(proyecciones, max_años=9)
                     
                     if proyecciones_filtradas:
-                        proyecciones_data = [['Año', 'Sector', 'Indicador', 'Valor']]
+                        proyecciones_data = [['Año', 'Sector', 'Indicador', 'Valor', 'Multiplicador']]
+                        
+                        año_actual = datetime.now().year
                         for p in proyecciones_filtradas:
+                            año = p.get('año', 0)
+                            multiplicador_display = f"{p.get('multiplicador', 1.0):.2f}" if año > año_actual else "-"
+                            
                             proyecciones_data.append([
-                                str(p.get('año', '')),
+                                str(año),
                                 p.get('sector', ''),
                                 p.get('indicador', 'Proyección'),
-                                str(p.get('valor', ''))
+                                str(p.get('valor', '')),
+                                multiplicador_display
                             ])
                         
-                        tabla_proyecciones = Table(proyecciones_data, colWidths=[0.7*inch, 1.5*inch, 2*inch, 1*inch])
+                        tabla_proyecciones = Table(proyecciones_data, colWidths=[0.6*inch, 1.3*inch, 1.8*inch, 0.9*inch, 0.9*inch])
                         tabla_proyecciones.setStyle(TableStyle([
                             ('BACKGROUND', (0, 0), (-1, 0), self.institutional_colors["secondary"]),
                             ('TEXTCOLOR', (0, 0), (-1, 0), white),
@@ -896,8 +878,23 @@ class PDFService:
                 story.append(Spacer(1, 15))
 
     def _agregar_seccion_oferta(self, story: List, oferta: Dict[str, Any]):
-        """Agrega sección de oferta educativa"""
-        resumen = oferta.get("resumen", {})
+        """CORREGIDO: Manejar estructura normalizada de oferta educativa"""
+        
+        # Normalizar estructura si es necesario
+        if isinstance(oferta, list):
+            resumen = {
+                "total_programas": len(oferta),
+                "programas_activos": len([p for p in oferta if p.get("estudiantes_actuales", 0) > 0])
+            }
+            programas = oferta
+        elif isinstance(oferta, dict):
+            resumen = oferta.get("resumen", {})
+            programas = oferta.get("programas", [])
+        else:
+            resumen = {}
+            programas = []
+        
+        # Sección de resumen
         if resumen:
             story.append(Paragraph("Resumen de Oferta", self.styles['SubsectionTitle']))
             
@@ -905,9 +902,10 @@ class PDFService:
                 ['Métrica', 'Valor'],
                 ['Total Programas', str(resumen.get('total_programas', 0))],
                 ['Programas Activos', str(resumen.get('programas_activos', 0))],
-                ['Programas en Desarrollo', str(resumen.get('programas_desarrollo', 0))],
-                ['Cobertura Regional', str(resumen.get('cobertura_regional', 0))],
-                ['Sectores Cubiertos', str(resumen.get('sectores_cubiertos', 0))]
+                ['Capacidad Total', str(resumen.get('capacidad_total', 'N/A'))],
+                ['Estudiantes Totales', str(resumen.get('estudiantes_totales', 'N/A'))],
+                ['Ocupación Promedio', f"{resumen.get('ocupacion_promedio', 0)}%"],
+                ['Sectores Cubiertos', str(resumen.get('sectores_atendidos', 0))]
             ]
             
             tabla_resumen = Table(resumen_data, colWidths=[2.5*inch, 2.5*inch])
@@ -924,26 +922,26 @@ class PDFService:
             story.append(tabla_resumen)
             story.append(Spacer(1, 20))
         
-        # Programas destacados
-        programas = oferta.get("programas", [])
+        # Tabla de programas
         if programas:
-            story.append(Paragraph("Programas Destacados", self.styles['SubsectionTitle']))
+            story.append(Paragraph("Programas", self.styles['SubsectionTitle']))
             
-            programas_data = [['Programa', 'Nivel', 'Duración', 'Estado', 'Demanda']]
-            for prog in programas[:10]:
+            programas_data = [['Código', 'Programa', 'Nivel', 'Sector', 'Ocupación']]
+            for prog in programas[:15]:  # Máximo 15 programas
                 programas_data.append([
-                    prog.get("nombre", ""),
+                    prog.get("codigo", "N/A"),
+                    prog.get("nombre", "")[:40],  # Truncar nombre largo
                     prog.get("nivel", ""),
-                    prog.get("duracion", ""),
-                    prog.get("estado", ""),
-                    str(prog.get("demanda", ""))
+                    prog.get("sector", ""),
+                    f"{prog.get('ocupacion', 0)}%"
                 ])
             
-            tabla_programas = Table(programas_data, colWidths=[2*inch, 1*inch, 1*inch, 1*inch, 0.8*inch])
+            tabla_programas = Table(programas_data, colWidths=[0.7*inch, 2.5*inch, 1*inch, 1*inch, 0.7*inch])
             tabla_programas.setStyle(TableStyle([
                 ('BACKGROUND', (0, 0), (-1, 0), self.institutional_colors["primary"]),
                 ('TEXTCOLOR', (0, 0), (-1, 0), white),
-                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+                ('ALIGN', (4, 0), (4, -1), 'CENTER'),  # Ocupación centrada
                 ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
                 ('FONTSIZE', (0, 0), (-1, -1), 8),
                 ('GRID', (0, 0), (-1, -1), 1, black),
@@ -951,6 +949,9 @@ class PDFService:
             ]))
             
             story.append(tabla_programas)
+        else:
+            # Si no hay programas, mostrar mensaje
+            story.append(Paragraph("No hay programas educativos disponibles para mostrar.", self.styles['Normal']))
 
     def _agregar_seccion_documentos(self, story: List, documentos: Dict[str, Any]):
         """Agrega sección de documentos de referencia"""
@@ -1015,7 +1016,7 @@ class PDFService:
             pie.y = 50
             pie.width = 150
             pie.height = 150
-            pie.data = [verde, amarillo, rojo]
+            pie.data = [verde, amarillo,rojo]
             pie.labels = [f'Verde\n{verde}', f'Amarillo\n{amarillo}', f'Rojo\n{rojo}']
             pie.slices.strokeWidth = 1
             pie.slices.strokeColor = white
@@ -1057,7 +1058,6 @@ class PDFService:
         story.append(tabla_portada)
         story.append(PageBreak())
         
-        # Tabla de contenido
         story.append(Paragraph("Tabla de Contenido", self.styles['SectionTitle']))
         story.append(Spacer(1, 20))
         
@@ -1090,20 +1090,19 @@ class PDFService:
         
         # 3. DOFA
         dofa = datos.get("analisis_dofa", {})
-        if dofa:
-            story.append(Paragraph("3. Análisis DOFA", self.styles['SectionTitle']))
-            story.append(Spacer(1, 15))
+        story.append(Paragraph("3. Análisis DOFA", self.styles['SectionTitle']))
+        story.append(Spacer(1, 15))
+        if dofa and any(dofa.values()):
             self._agregar_seccion_dofa(story, dofa)
-            story.append(PageBreak())
+        else:
+            story.append(Paragraph("No hay análisis DOFA disponible para este período.", self.styles['Normal']))
+        story.append(PageBreak())
         
         # 4. Escenarios
         escenarios = datos.get("escenarios_prospectivos", {})
         if escenarios:
             story.append(Paragraph("4. Escenarios Prospectivos", self.styles['SectionTitle']))
             story.append(Spacer(1, 15))
-            drawing = self._crear_grafica_escenarios(escenarios.get("escenarios", []))
-            if drawing:
-                story.append(drawing)
             self._agregar_seccion_escenarios_mejorada(story, escenarios)
         
         return story
@@ -1148,22 +1147,19 @@ class PDFService:
         
         story.append(PageBreak())
         
-        # 1. Escenarios
         prospectiva = datos.get("prospectiva", {})
         story.append(Paragraph("1. Escenarios Prospectivos", self.styles['SectionTitle']))
         story.append(Spacer(1, 15))
-        drawing = self._crear_grafica_escenarios(prospectiva.get("escenarios", []))
-        if drawing:
-            story.append(drawing)
         self._agregar_seccion_escenarios_mejorada(story, prospectiva)
         story.append(PageBreak())
         
-        # 2. DOFA
         dofa = datos.get("analisis_dofa", {})
-        if dofa:
-            story.append(Paragraph("2. Análisis DOFA", self.styles['SectionTitle']))
-            story.append(Spacer(1, 15))
+        story.append(Paragraph("2. Análisis DOFA", self.styles['SectionTitle']))
+        story.append(Spacer(1, 15))
+        if dofa and any(dofa.values()):
             self._agregar_seccion_dofa(story, dofa)
+        else:
+            story.append(Paragraph("No hay análisis DOFA disponible para este período.", self.styles['Normal']))
         
         return story
 
