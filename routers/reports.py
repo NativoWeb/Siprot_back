@@ -676,7 +676,6 @@ async def eliminar_reporte(
         logger.exception("No se pudo registrar en auditoría la eliminación")
 
     return JSONResponse({"message": "Reporte eliminado exitosamente"})
-
 # -----------------------
 # Admin: listar todos (solo admins)
 # -----------------------
