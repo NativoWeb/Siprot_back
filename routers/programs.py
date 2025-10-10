@@ -6,7 +6,7 @@ import pandas as pd
 import io
 from datetime import datetime
 
-from models import Program, User, DemandIndicator
+from models import Program, User
 from schemas import ProgramCreate, ProgramUpdate, ProgramResponse
 from routers.auth import get_db, require_role
 from dependencies import get_current_user
@@ -46,13 +46,13 @@ def create_program(
 
 # 📂 Carga masiva de programas desde CSV/Excel
 @router.post("/bulk-upload")
-def bulk_upload_demand_indicators(
+def bulk_upload_programs(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["planeacion", "superadmin"]))
 ):
     """
-    Procesa un archivo CSV o Excel para crear múltiples registros de DemandIndicator.
+    Procesa un archivo CSV o Excel para crear múltiples programas.
     """
     allowed_types = [
         "text/csv",
@@ -74,8 +74,9 @@ def bulk_upload_demand_indicators(
         else:
             df = pd.read_excel(io.BytesIO(contents))
         
-        required_columns = ["sector", "year", "demand_value"]
-        optional_columns = ["indicator_value", "source_document_id"]
+        # Columnas requeridas para programas
+        required_columns = ["code", "name", "level", "sector", "core_line", "capacity"]
+        optional_columns = ["current_students", "region", "description", "program_date"]
         
         missing_columns = [col for col in required_columns if col not in df.columns]
         if missing_columns:
@@ -92,55 +93,90 @@ def bulk_upload_demand_indicators(
         
         for index, row in df.iterrows():
             try:
+                # Validar code
+                if pd.isna(row["code"]) or str(row["code"]).strip() == "":
+                    errors.append(f"Fila {index + 2}: Campo 'code' es requerido")
+                    continue
+                
+                code = str(row["code"]).strip()
+                
+                # Verificar si el código ya existe
+                existing = db.query(Program).filter(Program.code == code).first()
+                if existing:
+                    errors.append(f"Fila {index + 2}: El código '{code}' ya existe")
+                    continue
+                
+                # Validar name
+                if pd.isna(row["name"]) or str(row["name"]).strip() == "":
+                    errors.append(f"Fila {index + 2}: Campo 'name' es requerido")
+                    continue
+                
+                # Validar level
+                if pd.isna(row["level"]) or str(row["level"]).strip() == "":
+                    errors.append(f"Fila {index + 2}: Campo 'level' es requerido")
+                    continue
+                
                 # Validar sector
                 if pd.isna(row["sector"]) or str(row["sector"]).strip() == "":
                     errors.append(f"Fila {index + 2}: Campo 'sector' es requerido")
                     continue
                 
-                # Validar año
-                if pd.isna(row["year"]):
-                    errors.append(f"Fila {index + 2}: Campo 'year' es requerido")
-                    continue
-                try:
-                    year = int(row["year"])
-                except ValueError:
-                    errors.append(f"Fila {index + 2}: 'year' debe ser un número entero")
+                # Validar core_line
+                if pd.isna(row["core_line"]) or str(row["core_line"]).strip() == "":
+                    errors.append(f"Fila {index + 2}: Campo 'core_line' es requerido")
                     continue
                 
-                # Validar demand_value
-                if pd.isna(row["demand_value"]):
-                    errors.append(f"Fila {index + 2}: Campo 'demand_value' es requerido")
+                # Validar capacity
+                if pd.isna(row["capacity"]):
+                    errors.append(f"Fila {index + 2}: Campo 'capacity' es requerido")
                     continue
                 try:
-                    demand_value = float(row["demand_value"])
+                    capacity = int(row["capacity"])
+                    if capacity < 0:
+                        errors.append(f"Fila {index + 2}: 'capacity' debe ser mayor o igual a 0")
+                        continue
                 except ValueError:
-                    errors.append(f"Fila {index + 2}: 'demand_value' debe ser numérico")
+                    errors.append(f"Fila {index + 2}: 'capacity' debe ser un número entero")
                     continue
 
-                demand_data = {
+                program_data = {
+                    "code": code,
+                    "name": str(row["name"]).strip(),
+                    "level": str(row["level"]).strip(),
                     "sector": str(row["sector"]).strip(),
-                    "year": year,
-                    "demand_value": demand_value,
+                    "core_line": str(row["core_line"]).strip(),
+                    "capacity": capacity,
+                    "created_by": current_user.id
                 }
                 
-                if "indicator_value" in df.columns and not pd.isna(row["indicator_value"]):
+                # Campos opcionales
+                if "current_students" in df.columns and not pd.isna(row["current_students"]):
                     try:
-                        demand_data["indicator_value"] = float(row["indicator_value"])
+                        program_data["current_students"] = int(row["current_students"])
                     except ValueError:
-                        errors.append(f"Fila {index + 2}: 'indicator_value' debe ser numérico")
+                        errors.append(f"Fila {index + 2}: 'current_students' debe ser numérico")
                         continue
                 
-                if "source_document_id" in df.columns and not pd.isna(row["source_document_id"]):
+                if "region" in df.columns and not pd.isna(row["region"]):
+                    program_data["region"] = str(row["region"]).strip()
+                
+                if "description" in df.columns and not pd.isna(row["description"]):
+                    program_data["description"] = str(row["description"]).strip()
+                
+                if "program_date" in df.columns and not pd.isna(row["program_date"]):
                     try:
-                        demand_data["source_document_id"] = int(row["source_document_id"])
-                    except ValueError:
-                        errors.append(f"Fila {index + 2}: 'source_document_id' debe ser entero")
+                        program_data["program_date"] = pd.to_datetime(row["program_date"])
+                    except:
+                        errors.append(f"Fila {index + 2}: 'program_date' tiene formato inválido")
                         continue
+                else:
+                    # Si no se proporciona program_date, usar la fecha actual
+                    program_data["program_date"] = datetime.utcnow()
 
                 # Crear registro
-                indicator = DemandIndicator(**demand_data)
-                db.add(indicator)
-                created_records.append(f"{demand_data['sector']} - {demand_data['year']}")
+                program = Program(**program_data)
+                db.add(program)
+                created_records.append(f"{program_data['code']} - {program_data['name']}")
             
             except Exception as e:
                 errors.append(f"Fila {index + 2}: Error procesando datos - {str(e)}")
@@ -149,11 +185,11 @@ def bulk_upload_demand_indicators(
             db.commit()
         
         return {
-            "message": f"Se cargaron {len(created_records)} indicadores. {len(errors)} errores encontrados",
+            "message": f"Se cargaron {len(created_records)} programas. {len(errors)} errores encontrados",
             "created_count": len(created_records),
             "error_count": len(errors),
-            "created_indicators": created_records,
-            "errors": errors[:10],
+            "created_programs": created_records,
+            "errors": errors[:10],  # Mostrar solo los primeros 10 errores
         }
     
     except Exception as e:
@@ -236,57 +272,43 @@ def analyze_matrix(
 
 @router.get("/analysis/demand-comparison")
 def analyze_demand_comparison(
-    year: int,
     db: Session = Depends(get_db),
     current_user=Depends(require_role(["planeacion", "administrativo", "superadmin"]))
 ):
     """
-    Compara oferta educativa con indicadores de demanda por sector (R3.3).
+    Compara oferta educativa calculando demanda automáticamente por sector (R3.3).
+    Fórmula: demanda = (matriculados/cupos) * 100
     """
-    try:
-        programs_data = (
-            db.query(
-                Program.sector,
-                func.count(Program.id).label("programs"),
-                func.sum(Program.current_students).label("current_students")
-            )
-            .filter(Program.is_active == True)
-            .group_by(Program.sector)
-            .all()
+    programs_data = (
+        db.query(
+            Program.sector,
+            func.count(Program.id).label("programs"),
+            func.sum(Program.current_students).label("total_students"),
+            func.sum(Program.capacity).label("total_capacity")
         )
+        .filter(Program.is_active == True)
+        .group_by(Program.sector)
+        .all()
+    )
 
-        try:
-            demand_data = (
-                db.query(DemandIndicator.sector, DemandIndicator.demand_value)
-                .filter(DemandIndicator.year == year)
-                .all()
-            )
-            demand_map = {d.sector: d.demand_value for d in demand_data}
-        except Exception as e:
-            print(f"Warning: Could not fetch demand indicators: {e}")
-            # Return empty demand map if table doesn't exist or has issues
-            demand_map = {}
+    results = []
+    for sector, programs, total_students, total_capacity in programs_data:
+        total_students = total_students or 0
+        total_capacity = total_capacity or 0
+        
+        # Calcular demanda con la fórmula
+        demand_percentage = (total_students / total_capacity * 100) if total_capacity > 0 else 0
+        
+        results.append({
+            "sector": sector,
+            "programs": programs,
+            "current_students": total_students,
+            "total_capacity": total_capacity,
+            "demand_percentage": round(demand_percentage, 2),
+            "available_spots": total_capacity - total_students
+        })
 
-        results = []
-        for sector, programs, current_students in programs_data:
-            demand_value = demand_map.get(sector, 0)
-            results.append({
-                "sector": sector,
-                "programs": programs,
-                "current_students": current_students or 0,
-                "demand_value": demand_value,
-                "gap": (demand_value - (current_students or 0))
-            })
-
-        return results
-    
-    except Exception as e:
-        print(f"Error in demand comparison: {e}")
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Error al obtener comparación de demanda: {str(e)}"
-        )
-
+    return results
 
 @router.get("/analysis/filtered", response_model=List[ProgramResponse])
 def analyze_filtered(

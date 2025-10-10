@@ -83,7 +83,7 @@ class Program(Base):
     __tablename__ = "programs"
 
     id = Column(Integer, primary_key=True, index=True)
-    code = Column(String, unique=True, nullable=False)
+    code = Column(String, nullable=False)
     name = Column(String, nullable=False)
     level = Column(String, nullable=False)
     sector = Column(String, nullable=False)
@@ -109,18 +109,6 @@ class Program(Base):
 
 
 # ==================== INDICADORES Y PROYECCIONES ====================
-
-class DemandIndicator(Base):
-    __tablename__ = "demand_indicators"
-
-    id = Column(Integer, primary_key=True, index=True)
-    sector = Column(String, nullable=False)
-    year = Column(Integer, nullable=False)
-    demand_value = Column(Numeric(10,2))
-    indicator_value = Column(Float)   # 🔹 Este existe en la tabla
-    source_document_id = Column(Integer, ForeignKey("documents.id"), nullable=True)
-
-
 
 class ProjectionSetting(Base):
     __tablename__ = "projection_settings"
