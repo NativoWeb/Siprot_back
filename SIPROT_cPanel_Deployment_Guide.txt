@@ -1,0 +1,120 @@
+
+🚀 PASOS PARA DESPLEGAR EL PROYECTO SIPROT EN CPANEL (USANDO MYSQL)
+
+---------------------------------------
+🧩 1. CREAR LA BASE DE DATOS EN CPANEL
+---------------------------------------
+1. Entra a tu cPanel → Bases de datos MySQL®
+2. Crea una base de datos: siprot_db
+3. Crea un usuario: siprot_user
+4. Asigna una contraseña segura.
+5. Asigna el usuario a la base de datos con TODOS LOS PRIVILEGIOS.
+
+Ejemplo (los nombres finales suelen incluir el prefijo de tu cuenta):
+  Base: usuario_cpanel_siprot_db
+  Usuario: usuario_cpanel_siprot_user
+
+---------------------------------------
+🧾 2. CREAR EL ARCHIVO .env
+---------------------------------------
+Crea un archivo llamado .env dentro de tu carpeta /backend con el siguiente contenido:
+
+DATABASE_URL=mysql+pymysql://usuario_cpanel_siprot_user:TuContraseña@localhost/usuario_cpanel_siprot_db
+SECRET_KEY=clave_super_segura_y_unica
+ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=60
+
+⚠️ Reemplaza usuario_cpanel_siprot_user, usuario_cpanel_siprot_db y TuContraseña por tus datos reales.
+
+---------------------------------------
+⚙️ 3. CONFIGURAR database.py
+---------------------------------------
+Edita tu archivo backend/database.py para que quede así:
+
+import os
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.declarative import declarative_base
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DATABASE_URL = os.getenv('DATABASE_URL')
+
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+Base = declarative_base()
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+---------------------------------------
+📦 4. INSTALAR DEPENDENCIAS
+---------------------------------------
+En la terminal de cPanel o SSH:
+
+cd ~/backend
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+Asegúrate de que tu requirements.txt incluya:
+fastapi
+uvicorn
+python-dotenv
+sqlalchemy
+pymysql
+passlib[bcrypt]
+python-multipart
+jinja2
+
+---------------------------------------
+🧪 5. PROBAR LA CONEXIÓN A LA BASE DE DATOS
+---------------------------------------
+Abre la terminal (con el entorno activado):
+
+python
+
+Luego ejecuta:
+
+from database import engine
+print(engine.connect().execute("SELECT 1").fetchall())
+
+Si ves [(1,)], la conexión está correcta.
+
+---------------------------------------
+⚙️ 6. CONFIGURAR LA APP EN CPANEL
+---------------------------------------
+1. Ve a cPanel → Setup Python App
+2. Configura con:
+   - Python version: 3.10 o superior
+   - Application root: /home/usuario/backend
+   - Application startup file: main.py
+   - Application entry point: app
+   - Passenger log file: /home/usuario/logs/passenger.log
+3. Crea un archivo passenger_wsgi.py en /backend con:
+
+import sys, os
+from main import app as application
+sys.path.insert(0, os.path.dirname(__file__))
+
+4. Guarda y reinicia la aplicación.
+
+---------------------------------------
+🌐 7. DESPLEGAR EL FRONTEND (VUE)
+---------------------------------------
+1. En tu PC:
+   npm run build
+2. Sube el contenido de la carpeta /dist al directorio /public_html de cPanel.
+3. En tu código Vue, asegúrate de que las peticiones apunten a:
+   const API_URL = "https://tudominio.com/backend";
+
+---------------------------------------
+✅ 8. VERIFICAR
+---------------------------------------
+- Backend (API): https://tudominio.com/backend/docs
+- Frontend (Vue): https://tudominio.com
