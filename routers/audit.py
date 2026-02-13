@@ -162,7 +162,7 @@ class AuditLogger:
         user_agent = None
 
         if request:
-            ip_address = request.client.host if hasattr(request, 'client') else None
+            ip_address = request.client.host if hasattr(request, 'client') and request.client else None
             user_agent = request.headers.get("user-agent") if hasattr(request, 'headers') else None
 
         resource_type = resource_type or target_type
@@ -330,7 +330,7 @@ def setup_audit_logging():
 
 def get_client_ip(request: Request) -> str:
     """Obtiene la IP del cliente desde la request."""
-    return request.client.host if request and hasattr(request, "client") else "unknown"
+    return request.client.host if request and hasattr(request, "client") and request.client else "unknown"
 
 def get_user_agent(request: Request) -> str:
     """Obtiene el User-Agent del cliente desde la request."""
