@@ -27,7 +27,7 @@ class ScenarioType(enum.Enum):
 
 class User(Base):
     __tablename__ = "users"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String(100), unique=True, index=True, nullable=False)
     password = Column(String(255), nullable=False)
@@ -83,16 +83,16 @@ class Program(Base):
     __tablename__ = "programs"
 
     id = Column(Integer, primary_key=True, index=True)
-    code = Column(String, nullable=False)
-    name = Column(String, nullable=False)
-    level = Column(String, nullable=False)
-    sector = Column(String, nullable=False)
-    core_line = Column(String, nullable=False)
+    code = Column(String(50), nullable=False)
+    name = Column(String(255), nullable=False)
+    level = Column(String(100), nullable=False)
+    sector = Column(String(100), nullable=False)
+    core_line = Column(String(100), nullable=False)
 
     capacity = Column(Integer, nullable=False)
     current_students = Column(Integer, default=0)
-    region = Column(String, nullable=True)
-    description = Column(String, nullable=True)
+    region = Column(String(100), nullable=True)
+    description = Column(String(500), nullable=True)
 
     # Fecha real de creación del programa (manual, no ligada al registro en BD)
     program_date = Column(DateTime, nullable=False)
@@ -114,7 +114,7 @@ class ProjectionSetting(Base):
     __tablename__ = "projection_settings"
 
     id = Column(Integer, primary_key=True)
-    sector = Column(String)
+    sector = Column(String(100))
     growth_rate = Column(Float)
     years_to_project = Column(Integer, default=10)
 
@@ -149,7 +149,7 @@ class Indicador(Base):
 
 class Reporte(Base):
     __tablename__ = "reportes"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     tipo = Column(String(50), nullable=False)
     estado = Column(String(20), default="generando")
@@ -177,7 +177,7 @@ class Reporte(Base):
 
 class LogReporte(Base):
     __tablename__ = "logs_reportes"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     reporte_id = Column(Integer, nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow)
@@ -192,7 +192,7 @@ class LogReporte(Base):
 
 class ConfiguracionReporte(Base):
     __tablename__ = "configuraciones_reportes"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     tipo_reporte = Column(String(50), nullable=False)
     nombre_configuracion = Column(String(100), nullable=False)
@@ -212,12 +212,12 @@ class ConfiguracionReporte(Base):
 
 class AuditLog(Base):
     __tablename__ = "audit_logs"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    user_email = Column(String, nullable=True)
-    target_type = Column(String, nullable=True)
-    target_id = Column(String, nullable=True)
+    user_email = Column(String(100), nullable=True)
+    target_type = Column(String(100), nullable=True)
+    target_id = Column(String(100), nullable=True)
     action = Column(String(100), nullable=False)
     resource_type = Column(String(50), nullable=True)
     resource_id = Column(String(50), nullable=True)
@@ -236,7 +236,7 @@ class AuditLog(Base):
 
 class Permission(Base):
     __tablename__ = "permissions"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False, unique=True)
     description = Column(Text, nullable=True)
@@ -246,10 +246,10 @@ class Permission(Base):
 
     def __repr__(self):
         return f"<Permission(name='{self.name}')>"
-    
+
 class UserPermission(Base):
     __tablename__ = "user_permissions"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     permission_id = Column(Integer, ForeignKey("permissions.id"), nullable=False)
@@ -264,7 +264,7 @@ class UserPermission(Base):
 
 class RolePermission(Base):
     __tablename__ = "role_permissions"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     role = Column(String(20), nullable=False)
     permission_id = Column(Integer, ForeignKey("permissions.id"), nullable=False)
@@ -279,11 +279,11 @@ class RolePermission(Base):
         return f"<RolePermission(role='{self.role}', permission_id={self.permission_id})>"
 
 
-# ==================== CATÁLOGOS ====================
+# ==================== CATALOGOS ====================
 
 class Sector(Base):
     __tablename__ = "sectors"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(200), nullable=False, unique=True)
     description = Column(Text, nullable=True)
@@ -300,7 +300,7 @@ class Sector(Base):
 
 class CoreLine(Base):
     __tablename__ = "core_lines"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(200), nullable=False, unique=True)
     description = Column(Text, nullable=True)
@@ -319,7 +319,7 @@ class CoreLine(Base):
 
 class DocumentType(Base):
     __tablename__ = "document_types"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(200), nullable=False, unique=True)
     description = Column(Text, nullable=True)
@@ -337,7 +337,7 @@ class DocumentType(Base):
 
 class SystemConfiguration(Base):
     __tablename__ = "system_configurations"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     key = Column(String(100), nullable=False, unique=True)
     value = Column(Text, nullable=True)
@@ -358,7 +358,7 @@ class SystemConfiguration(Base):
 
 class Scenario(Base):
     __tablename__ = "scenarios"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)
     scenario_type = Column(String(20), nullable=False)
@@ -368,8 +368,7 @@ class Scenario(Base):
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    
-    # 🔹 Nuevo campo: referencia al documento que generó este escenario
+
     document_id = Column(Integer, ForeignKey("documents.id"), nullable=False)
 
     # Relaciones
@@ -383,7 +382,7 @@ class Scenario(Base):
 
 class ScenarioProjection(Base):
     __tablename__ = "scenario_projections"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     scenario_id = Column(Integer, ForeignKey("scenarios.id"), nullable=False)
     sector = Column(String(100), nullable=False)
@@ -402,7 +401,7 @@ class ScenarioProjection(Base):
 
 class ScenarioConfiguration(Base):
     __tablename__ = "scenario_configurations"
-    
+
     id = Column(Integer, primary_key=True, index=True)
     scenario_type = Column(String(20), nullable=False)
     parameter_name = Column(String(100), nullable=False)
@@ -422,11 +421,11 @@ class DofaItem(Base):
     __tablename__ = "dofa_items"
 
     id = Column(Integer, primary_key=True, index=True)
-    category = Column(String, nullable=False)  # D / O / F / A
+    category = Column(String(10), nullable=False)  # D / O / F / A
     text = Column(Text, nullable=False)
-    source = Column(String, nullable=True)
-    responsible = Column(String, nullable=True)
-    priority = Column(String, nullable=True)
+    source = Column(String(200), nullable=True)
+    responsible = Column(String(200), nullable=True)
+    priority = Column(String(20), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, onupdate=func.now())
     created_by = Column(Integer, ForeignKey("users.id"))
@@ -439,7 +438,7 @@ class DofaChangeLog(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     dofa_item_id = Column(Integer, ForeignKey("dofa_items.id"))
-    action = Column(String, nullable=False)
+    action = Column(String(50), nullable=False)
     changed_at = Column(DateTime, server_default=func.now())
     changed_by = Column(Integer, ForeignKey("users.id"))
     details = Column(Text, nullable=True)
