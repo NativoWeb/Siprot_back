@@ -53,6 +53,8 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://127.0.0.1:3000",
         "http://localhost:8080",  # Vue CLI dev server
+        "https://siprot.nativoweb.com",  # Producción
+        "http://siprot.nativoweb.com",
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
